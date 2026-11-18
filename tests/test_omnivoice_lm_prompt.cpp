@@ -1,4 +1,5 @@
 #include "config.h"
+#include "diffusion_decoder/token_selector.h"
 #include "gguf_model.h"
 #include "qwen3_lm/qwen3_model.h"
 
@@ -171,12 +172,129 @@ int main() {
             ggml_backend_free(backend);
             throw std::runtime_error(status.message());
         }
+        omnivoice::OmniVoiceLmInput unconditional;
+        unconditional.sequence_length = input.target_frames;
+        unconditional.codebooks = input.codebooks;
+        unconditional.target_start = 0;
+        unconditional.target_frames = input.target_frames;
+        unconditional.audio_mask.assign(
+            static_cast<size_t>(input.target_frames),
+            1);
+        unconditional.input_ids.resize(
+            static_cast<size_t>(input.codebooks) *
+            static_cast<size_t>(input.target_frames));
+        for (int32_t codebook = 0; codebook < input.codebooks; ++codebook) {
+            std::copy(
+                input.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.sequence_length +
+                        input.target_start),
+                input.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.sequence_length +
+                        input.target_start +
+                        input.target_frames),
+                unconditional.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.target_frames));
+        }
+        status = model->init_diffusion_graph(
+            input,
+            unconditional,
+            true,
+            2.0f);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        omnivoice::OmniVoiceLmPackedOutput packed;
+        status = model->run_diffusion_graph(
+            input,
+            unconditional,
+            packed);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
         const float hidden_error = maximum_error(
             output.hidden,
             fixture.hidden);
         const float error = maximum_error(
             output.target_logits,
             fixture.target_logits);
+        const float packed_error = maximum_error(
+            packed.conditional_target_logits,
+            output.target_logits);
+        std::vector<int32_t> all_masked(
+            static_cast<size_t>(input.codebooks) *
+                static_cast<size_t>(input.target_frames),
+            config.audio_mask_id);
+        omnivoice::TokenSelectionInput selector_input;
+        selector_input.codebooks = input.codebooks;
+        selector_input.frames = input.target_frames;
+        selector_input.vocab_size = config.audio_vocab_size;
+        selector_input.mask_id = config.audio_mask_id;
+        selector_input.top_k = 1;
+        selector_input.cond_logits =
+            &packed.conditional_target_logits;
+        selector_input.uncond_logits =
+            &packed.unconditional_target_logits;
+        selector_input.current_tokens = &all_masked;
+        omnivoice::TokenSelectorOptions selector_options;
+        selector_options.guidance_scale = 2.0f;
+        selector_options.layer_penalty_factor = 0.0f;
+        selector_options.position_temperature = 0.0f;
+        selector_options.class_temperature = 0.0f;
+        omnivoice::TokenSelector selector;
+        omnivoice::TokenSelectionOutput expected_selection;
+        status = selector.select(
+            selector_input,
+            selector_options,
+            expected_selection);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float confidence_error = maximum_error(
+            packed.confidence,
+            expected_selection.confidence);
+        const bool predictions_match =
+            packed.predictions == expected_selection.predictions;
+        const std::vector<float> first_conditional_logits =
+            packed.conditional_target_logits;
+        for (int32_t& token : unconditional.input_ids) {
+            token = (token + 17) % (config.audio_vocab_size - 1);
+        }
+        status = model->run_diffusion_graph(
+            input,
+            unconditional,
+            packed);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float conditional_invariance_error = maximum_error(
+            packed.conditional_target_logits,
+            first_conditional_logits);
+        const float conditional_unconditional_error = maximum_error(
+            packed.conditional_target_logits,
+            packed.unconditional_target_logits);
+        model->release_diffusion_graph();
+        status = model->init_diffusion_graph(
+            input,
+            unconditional,
+            true,
+            2.0f);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        omnivoice::OmniVoiceLmPackedOutput rebuilt;
+        status = model->run_diffusion_graph(
+            input,
+            unconditional,
+            rebuilt);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float rebuilt_conditional_error = maximum_error(
+            rebuilt.conditional_target_logits,
+            first_conditional_logits);
         const bool cuda_device =
             std::string(device_name) != "CPU";
         const float hidden_tolerance =
@@ -187,9 +305,28 @@ int main() {
                   << hidden_error << '\n'
                   << "prompt_lm_logits_max_error: "
                   << error << '\n';
+        std::cout << "prompt_lm_packed_logits_max_error: "
+                  << packed_error << '\n'
+                  << "prompt_lm_packed_confidence_max_error: "
+                  << confidence_error << '\n'
+                  << "prompt_lm_packed_predictions_match: "
+                  << (predictions_match ? "true" : "false") << '\n'
+                  << "prompt_lm_packed_conditional_invariance_error: "
+                  << conditional_invariance_error << '\n'
+                  << "prompt_lm_packed_conditional_unconditional_error: "
+                  << conditional_unconditional_error << '\n'
+                  << "prompt_lm_packed_rebuilt_conditional_error: "
+                  << rebuilt_conditional_error << '\n';
         model.reset();
         ggml_backend_free(backend);
         if (!std::isfinite(error) || error > logits_tolerance ||
+            !std::isfinite(packed_error) ||
+            packed_error > logits_tolerance ||
+            !predictions_match ||
+            !std::isfinite(confidence_error) ||
+            confidence_error > logits_tolerance ||
+            !std::isfinite(conditional_invariance_error) ||
+            conditional_invariance_error > logits_tolerance ||
             !std::isfinite(hidden_error) ||
             hidden_error > hidden_tolerance) {
             return 1;

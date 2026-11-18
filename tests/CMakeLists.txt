@@ -66,14 +66,23 @@ set_tests_properties(omnivoice_lm PROPERTIES
 
 omnivoice_add_test(test_mask_schedule omnivoice_mask_schedule)
 omnivoice_add_test(test_token_selector omnivoice_token_selector)
+
+omnivoice_add_test(test_diffusion_decoder omnivoice_diffusion_decoder)
+omnivoice_add_test(test_merged_diffusion omnivoice_merged_diffusion)
+target_compile_definitions(test_merged_diffusion PRIVATE
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
+)
+set_tests_properties(omnivoice_merged_diffusion PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 120
+)
 if(OMNIVOICE_ENABLE_CUDA)
     omnivoice_add_cuda_test(
-        omnivoice_token_selector_cuda
-        test_token_selector
+        omnivoice_merged_diffusion_cuda
+        test_merged_diffusion
     )
 endif()
 
-omnivoice_add_test(test_diffusion_decoder omnivoice_diffusion_decoder)
 omnivoice_add_test(test_higgs_decoder omnivoice_higgs_decoder)
 target_compile_definitions(test_higgs_decoder PRIVATE
     OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"

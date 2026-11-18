@@ -140,46 +140,18 @@ Status run_diffusion_decoder(
         options.position_temperature;
     selector_options.class_temperature =
         options.class_temperature;
-    bool use_selector_graph =
-        runner.supports_selector_graph() &&
-        selector_options.class_temperature == 0.0f;
-
-    if (use_selector_graph) {
-        status = selector.init_graph(
-            runner.backend(),
-            codebooks,
-            frames,
-            config.audio_vocab_size,
-            config.audio_mask_id,
-            selector_options.guidance_scale);
-        if (!status) {
-            log_message(
-                log,
-                "selector: backend graph unavailable (" +
-                    status.message() +
-                    "), using CPU selector");
-            use_selector_graph = false;
-        } else {
-            const char* backend_name =
-                ggml_backend_name(runner.backend());
-            log_message(
-                log,
-                "selector: " +
-                    std::string(
-                        backend_name == nullptr
-                            ? "backend"
-                            : backend_name) +
-                    " GGML graph, fixed output mask");
-        }
-    } else {
-        log_message(
-            log,
-            "selector: CPU path, fixed output mask");
-    }
-    status = runner.init_graphs(
+    const bool read_host_logits =
+        selector_options.class_temperature > 0.0f;
+    log_message(
+        log,
+        read_host_logits
+            ? "diffusion LM: single packed graph + host stochastic sampler"
+            : "diffusion LM: single packed graph + fused deterministic sampler");
+    status = runner.init_graph(
         conditional,
         unconditional,
-        !use_selector_graph);
+        read_host_logits,
+        selector_options.guidance_scale);
     if (!status) {
         return status;
     }
@@ -189,38 +161,23 @@ Status run_diffusion_decoder(
     TokenSelectionOutput selection;
     for (int32_t step = 0; step < options.num_step; ++step) {
         const auto step_start = Clock::now();
-        OmniVoiceLmOutput conditional_output;
-        const auto conditional_start = Clock::now();
-        status = runner.run_conditional(conditional, conditional_output);
-        if (!status) {
-            return status;
-        }
-        const std::string conditional_time =
-            elapsed_milliseconds(conditional_start);
-        if (use_selector_graph
-                ? conditional_output.target_logits_tensor == nullptr
-                : conditional_output.target_logits.size() !=
-                    cell_count * config.audio_vocab_size) {
-            return Status::error(
-                "conditional LM produced invalid logits");
-        }
-
-        const auto unconditional_start = Clock::now();
         OmniVoiceLmInput step_unconditional = unconditional;
         step_unconditional.input_ids = current;
-        OmniVoiceLmOutput unconditional_output;
-        status = runner.run_unconditional(step_unconditional, unconditional_output);
+        OmniVoiceLmPackedOutput lm_output;
+        const auto lm_start = Clock::now();
+        status = runner.run_diffusion(
+            conditional,
+            step_unconditional,
+            lm_output);
         if (!status) {
             return status;
         }
-        const std::string unconditional_time =
-            elapsed_milliseconds(unconditional_start);
-        if (use_selector_graph
-                ? unconditional_output.target_logits_tensor == nullptr
-                : unconditional_output.target_logits.size() !=
-                    conditional_output.target_logits.size()) {
+        const std::string lm_time =
+            elapsed_milliseconds(lm_start);
+        if (lm_output.predictions.size() != cell_count ||
+            lm_output.confidence.size() != cell_count) {
             return Status::error(
-                "unconditional LM produced invalid logits");
+                "packed LM produced invalid sampler outputs");
         }
 
         const auto selection_start = Clock::now();
@@ -233,21 +190,28 @@ Status run_diffusion_decoder(
             static_cast<size_t>(step)];
         selection_input.current_tokens = &current;
 
-        if (use_selector_graph) {
-            status = selector.select_graph(
-                selection_input,
-                selector_options,
-                conditional_output.target_logits_tensor,
-                unconditional_output.target_logits_tensor,
-                selection);
-        } else {
+        if (read_host_logits) {
+            if (lm_output.conditional_target_logits.size() !=
+                    cell_count * config.audio_vocab_size ||
+                lm_output.unconditional_target_logits.size() !=
+                    cell_count * config.audio_vocab_size) {
+                return Status::error(
+                    "packed LM did not return host logits");
+            }
             selection_input.cond_logits =
-                &conditional_output.target_logits;
+                &lm_output.conditional_target_logits;
             selection_input.uncond_logits =
-                &unconditional_output.target_logits;
+                &lm_output.unconditional_target_logits;
             status = selector.select(
                 selection_input,
                 selector_options,
+                selection);
+        } else {
+            status = selector.select_scored(
+                selection_input,
+                selector_options,
+                lm_output.predictions,
+                lm_output.confidence,
                 selection);
         }
         if (!status) {
@@ -304,8 +268,7 @@ Status run_diffusion_decoder(
                 ": selected=" +
                 std::to_string(selected_this_step) +
                 " remaining=" + std::to_string(remaining) +
-                " cond=" + conditional_time + " ms" +
-                " uncond=" + unconditional_time + " ms" +
+                " lm=" + lm_time + " ms" +
                 " select=" + selection_time + " ms" +
                 " total=" + elapsed_milliseconds(step_start) + " ms");
     }

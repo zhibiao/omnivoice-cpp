@@ -48,37 +48,29 @@ public:
     }
 
     ~ModelLmRunner() override {
-        model_.release_diffusion_graphs();
+        model_.release_diffusion_graph();
     }
 
-    Status init_graphs(
+    Status init_graph(
         const OmniVoiceLmInput& conditional,
         const OmniVoiceLmInput& unconditional,
-        bool read_host_logits) override {
-        return model_.init_diffusion_graphs(
+        bool read_host_logits,
+        float guidance_scale) override {
+        return model_.init_diffusion_graph(
             conditional,
             unconditional,
-            read_host_logits);
+            read_host_logits,
+            guidance_scale);
     }
 
-    bool supports_selector_graph() const override {
-        return model_.supports_selector_graph();
-    }
-
-    ggml_backend_t backend() const override {
-        return model_.backend();
-    }
-
-    Status run_conditional(
-        const OmniVoiceLmInput& input,
-        OmniVoiceLmOutput& output) override {
-        return model_.run_conditional_graph(input, output);
-    }
-
-    Status run_unconditional(
-        const OmniVoiceLmInput& input,
-        OmniVoiceLmOutput& output) override {
-        return model_.run_unconditional_graph(input, output);
+    Status run_diffusion(
+        const OmniVoiceLmInput& conditional,
+        const OmniVoiceLmInput& unconditional,
+        OmniVoiceLmPackedOutput& output) override {
+        return model_.run_diffusion_graph(
+            conditional,
+            unconditional,
+            output);
     }
 
 private:

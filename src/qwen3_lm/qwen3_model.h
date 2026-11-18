@@ -36,6 +36,22 @@ struct OmniVoiceLmOutput {
     const ggml_tensor* target_logits_tensor = nullptr;
 };
 
+struct OmniVoiceLmPackedOutput {
+    // Host logits are only populated for the stochastic sampler path.
+    // Codebook-major [codebooks, target_frames, audio_vocab_size].
+    std::vector<float> conditional_target_logits;
+    std::vector<float> unconditional_target_logits;
+
+    // Codebook-major [codebooks, target_frames].
+    std::vector<int32_t> predictions;
+    std::vector<float> confidence;
+
+    const ggml_tensor* conditional_target_logits_tensor = nullptr;
+    const ggml_tensor* unconditional_target_logits_tensor = nullptr;
+    const ggml_tensor* predictions_tensor = nullptr;
+    const ggml_tensor* confidence_tensor = nullptr;
+};
+
 class OmniVoiceLM {
 public:
     OmniVoiceLM();
@@ -54,22 +70,21 @@ public:
         const OmniVoiceLmInput& input,
         OmniVoiceLmOutput& output) const;
 
-    Status init_diffusion_graphs(
+    Status init_diffusion_graph(
         const OmniVoiceLmInput& conditional,
         const OmniVoiceLmInput& unconditional,
-        bool read_host_logits);
-    Status run_conditional_graph(
+        bool read_host_logits,
+        float guidance_scale);
+    Status run_diffusion_graph(
         const OmniVoiceLmInput& input,
-        OmniVoiceLmOutput& output);
-    Status run_unconditional_graph(
-        const OmniVoiceLmInput& input,
-        OmniVoiceLmOutput& output);
-    void release_diffusion_graphs() noexcept;
-    bool supports_selector_graph() const noexcept;
+        const OmniVoiceLmInput& unconditional,
+        OmniVoiceLmPackedOutput& output);
+    void release_diffusion_graph() noexcept;
     ggml_backend_t backend() const noexcept;
 
 private:
     class LmGraph;
+    class DiffusionGraph;
 
     // OmniVoice LM graph:
     //   lm_text_ids / lm_audio_ids.* / lm_positions
@@ -90,8 +105,7 @@ private:
     std::unordered_map<std::string, ggml_tensor*> weights_;
     std::vector<Qwen3BlockWeights> blocks_;
     std::vector<ggml_tensor*> qkv_weights_;
-    std::unique_ptr<LmGraph> conditional_graph_;
-    std::unique_ptr<LmGraph> unconditional_graph_;
+    std::unique_ptr<DiffusionGraph> diffusion_graph_;
     bool diffusion_read_host_logits_ = true;
     bool loaded_ = false;
 };

@@ -344,4 +344,120 @@ ggml_tensor* build_qwen3_block(
     return ggml_add(context, residual, hidden);
 }
 
+ggml_tensor* build_qwen3_packed_block(
+    ggml_context* context,
+    const Qwen3Config& config,
+    const Qwen3BlockWeights& weights,
+    ggml_tensor* input,
+    ggml_tensor* first_positions,
+    ggml_tensor* second_positions,
+    int64_t first_sequence_length) {
+    if (context == nullptr ||
+        input == nullptr ||
+        first_positions == nullptr ||
+        second_positions == nullptr) {
+        throw std::runtime_error(
+            "packed Qwen3 block received a null tensor");
+    }
+    const int64_t sequence_length = input->ne[1];
+    const int64_t second_sequence_length =
+        sequence_length - first_sequence_length;
+    if (input->ne[0] != config.hidden_size ||
+        first_sequence_length <= 0 ||
+        second_sequence_length <= 0 ||
+        first_positions->ne[0] != first_sequence_length ||
+        second_positions->ne[0] != second_sequence_length) {
+        throw std::runtime_error(
+            "packed Qwen3 block input shape mismatch");
+    }
+
+    ggml_tensor* residual = cast_f32(context, input);
+    ggml_tensor* hidden = rms_norm(
+        context,
+        residual,
+        require_tensor(
+            weights.input_layernorm_weight,
+            "input_layernorm.weight",
+            config.hidden_size),
+        config.rms_norm_epsilon);
+    ggml_tensor* first_input = ggml_cont_2d(
+        context,
+        ggml_view_2d(
+            context,
+            hidden,
+            config.hidden_size,
+            first_sequence_length,
+            hidden->nb[1],
+            0),
+        config.hidden_size,
+        first_sequence_length);
+    ggml_tensor* second_input = ggml_cont_2d(
+        context,
+        ggml_view_2d(
+            context,
+            hidden,
+            config.hidden_size,
+            second_sequence_length,
+            hidden->nb[1],
+            static_cast<size_t>(first_sequence_length) * hidden->nb[1]),
+        config.hidden_size,
+        second_sequence_length);
+    hidden = ggml_concat(
+        context,
+        attention(
+            context,
+            config,
+            weights,
+            first_input,
+            first_positions,
+            nullptr,
+            first_sequence_length),
+        attention(
+            context,
+            config,
+            weights,
+            second_input,
+            second_positions,
+            nullptr,
+            second_sequence_length),
+        1);
+    hidden = ggml_add(context, residual, hidden);
+
+    residual = hidden;
+    hidden = rms_norm(
+        context,
+        hidden,
+        require_tensor(
+            weights.post_attention_layernorm_weight,
+            "post_attention_layernorm.weight",
+            config.hidden_size),
+        config.rms_norm_epsilon);
+    ggml_tensor* gate = linear(
+        context,
+        require_tensor(
+            weights.gate_proj_weight,
+            "mlp.gate_proj.weight",
+            config.hidden_size,
+            config.intermediate_size),
+        hidden);
+    ggml_tensor* up = linear(
+        context,
+        require_tensor(
+            weights.up_proj_weight,
+            "mlp.up_proj.weight",
+            config.hidden_size,
+            config.intermediate_size),
+        hidden);
+    hidden = ggml_swiglu_split(context, gate, up);
+    hidden = linear(
+        context,
+        require_tensor(
+            weights.down_proj_weight,
+            "mlp.down_proj.weight",
+            config.intermediate_size,
+            config.hidden_size),
+        hidden);
+    return ggml_add(context, residual, hidden);
+}
+
 } // namespace omnivoice

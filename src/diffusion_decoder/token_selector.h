@@ -2,10 +2,7 @@
 
 #include "status.h"
 
-#include "ggml-backend.h"
-
 #include <cstdint>
-#include <memory>
 #include <random>
 #include <vector>
 
@@ -52,33 +49,23 @@ public:
 
     void seed(uint64_t value);
 
-    Status init_graph(
-        ggml_backend_t backend,
-        int32_t codebooks,
-        int32_t frames,
-        int32_t vocab_size,
-        int32_t mask_id,
-        float guidance_scale);
     Status select(
         const TokenSelectionInput& input,
         const TokenSelectorOptions& options,
         TokenSelectionOutput& output);
 
-    Status select_graph(
+    Status select_scored(
         const TokenSelectionInput& input,
         const TokenSelectorOptions& options,
-        const ggml_tensor* conditional_logits,
-        const ggml_tensor* unconditional_logits,
+        const std::vector<int32_t>& predictions,
+        const std::vector<float>& confidence,
         TokenSelectionOutput& output);
 
 private:
-    class Graph;
-
     float uniform();
     float gumbel(float score, float temperature);
 
     std::mt19937_64 rng_;
-    std::unique_ptr<Graph> graph_;
 };
 
 } // namespace omnivoice

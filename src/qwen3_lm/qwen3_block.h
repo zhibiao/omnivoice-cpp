@@ -40,4 +40,13 @@ ggml_tensor* build_qwen3_block(
     ggml_tensor* positions,
     ggml_tensor* attention_mask);
 
+ggml_tensor* build_qwen3_packed_block(
+    ggml_context* context,
+    const Qwen3Config& config,
+    const Qwen3BlockWeights& weights,
+    ggml_tensor* input,
+    ggml_tensor* first_positions,
+    ggml_tensor* second_positions,
+    int64_t first_sequence_length);
+
 } // namespace omnivoice

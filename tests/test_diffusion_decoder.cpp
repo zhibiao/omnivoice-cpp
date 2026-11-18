@@ -15,92 +15,50 @@ public:
           vocab_(vocab) {
     }
 
-    omnivoice::Status init_graphs(
+    omnivoice::Status init_graph(
         const omnivoice::OmniVoiceLmInput& conditional,
         const omnivoice::OmniVoiceLmInput& unconditional,
-        bool read_host_logits) override {
+        bool read_host_logits,
+        float guidance_scale) override {
         ++init_calls;
         conditional_length = conditional.sequence_length;
         unconditional_length = unconditional.sequence_length;
-        if (!read_host_logits) {
+        if (read_host_logits || guidance_scale != 2.0f) {
             return omnivoice::Status::error(
-                "FakeRunner requires host logits");
+                "FakeRunner received unexpected graph options");
         }
         return omnivoice::Status::ok();
     }
 
-    bool supports_selector_graph() const override {
-        return false;
+    omnivoice::Status run_diffusion(
+        const omnivoice::OmniVoiceLmInput& conditional,
+        const omnivoice::OmniVoiceLmInput& unconditional,
+        omnivoice::OmniVoiceLmPackedOutput& output) override {
+        (void)conditional;
+        output = {};
+        output.predictions.resize(
+            static_cast<size_t>(codebooks_) * frames_);
+        output.confidence.resize(output.predictions.size());
+        int32_t masked = 0;
+        for (size_t cell = 0; cell < output.predictions.size(); ++cell) {
+            if (unconditional.input_ids[cell] == 9) {
+                ++masked;
+            }
+            output.predictions[cell] =
+                static_cast<int32_t>(cell % 8) + 1;
+            output.confidence[cell] =
+                1000.0f - static_cast<float>(cell) * 0.01f;
+        }
+        masked_per_call.push_back(masked);
+        return omnivoice::Status::ok();
     }
 
-    ggml_backend_t backend() const override {
-        return nullptr;
-    }
-
-    omnivoice::Status run_conditional(
-        const omnivoice::OmniVoiceLmInput& input,
-        omnivoice::OmniVoiceLmOutput& output) override {
-        return run_impl(input, output, true);
-    }
-
-    omnivoice::Status run_unconditional(
-        const omnivoice::OmniVoiceLmInput& input,
-        omnivoice::OmniVoiceLmOutput& output) override {
-        return run_impl(input, output, false);
-    }
-
-    std::vector<int32_t> conditions;
     std::vector<int32_t> masked_per_call;
     int32_t init_calls = 0;
     int32_t conditional_length = 0;
     int32_t unconditional_length = 0;
 
 private:
-    omnivoice::Status run_impl(
-        const omnivoice::OmniVoiceLmInput& input,
-        omnivoice::OmniVoiceLmOutput& output,
-        bool conditional) {
-        conditions.push_back(conditional ? 1 : 0);
-        output = {};
-        output.target_logits.assign(
-            static_cast<size_t>(codebooks_) *
-                frames_ * vocab_,
-            0.0f);
-
-        int32_t masked = 0;
-        for (int32_t codebook = 0;
-             codebook < codebooks_;
-             ++codebook) {
-            for (int32_t frame = 0; frame < frames_; ++frame) {
-                const int32_t token = input.input_ids[
-                    static_cast<size_t>(codebook) *
-                        static_cast<size_t>(input.sequence_length) +
-                    static_cast<size_t>(input.target_start + frame)];
-                if (token == 9) {
-                    ++masked;
-                }
-            }
-        }
-        masked_per_call.push_back(masked);
-
-        for (int32_t codebook = 0;
-             codebook < codebooks_;
-             ++codebook) {
-            for (int32_t frame = 0; frame < frames_; ++frame) {
-                const size_t cell =
-                    static_cast<size_t>(codebook) * frames_ +
-                    static_cast<size_t>(frame);
-                const int32_t desired =
-                    static_cast<int32_t>(cell % 8) + 1;
-                const size_t cell_offset =
-                    cell * static_cast<size_t>(vocab_);
-                output.target_logits[
-                    cell_offset + static_cast<size_t>(desired)] = 8.0f;
-            }
-        }
-        return omnivoice::Status::ok();
-    }
-
     int32_t codebooks_;
     int32_t frames_;
     int32_t vocab_;
@@ -184,7 +142,7 @@ int main() {
     }
     if (logs.size() != 5 ||
         logs.front().find("diffusion:") == std::string::npos ||
-        logs[1].find("selector: CPU path") == std::string::npos ||
+        logs[1].find("single packed graph") == std::string::npos ||
         logs.back().find("remaining=0") == std::string::npos) {
         std::cerr << "unexpected diffusion progress logs\n";
         return 1;
@@ -201,13 +159,8 @@ int main() {
         std::cerr << "unexpected diffusion graph initialization\n";
         return 1;
     }
-    if (runner.conditions !=
-        std::vector<int32_t>({1, 0, 1, 0, 1, 0})) {
-        std::cerr << "conditional/unconditional call order mismatch\n";
-        return 1;
-    }
     if (runner.masked_per_call !=
-        std::vector<int32_t>({8, 8, 5, 5, 2, 2})) {
+        std::vector<int32_t>({8, 5, 2})) {
         std::cerr << "committed token state was not propagated\n";
         return 1;
     }
