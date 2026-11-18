@@ -213,6 +213,14 @@ int main() {
         const float golden_error = maximum_error(
             packed.conditional_target_logits,
             fixture.target_logits);
+        omnivoice::OmniVoiceLmOutput unconditional_reference;
+        status = model->forward(unconditional, unconditional_reference);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float unconditional_reference_error = maximum_error(
+            packed.unconditional_target_logits,
+            unconditional_reference.target_logits);
 
         std::vector<int32_t> all_masked(
             static_cast<size_t>(fixture.codebooks) *
@@ -264,27 +272,108 @@ int main() {
         const float reuse_invariance_error = maximum_error(
             packed.conditional_target_logits,
             first_conditional);
+        const std::vector<float> changed_unconditional =
+            packed.unconditional_target_logits;
+        for (int32_t codebook = 0;
+             codebook < conditional.codebooks;
+             ++codebook) {
+            for (int32_t frame = 0;
+                 frame < conditional.target_frames;
+                 ++frame) {
+                const size_t index =
+                    static_cast<size_t>(codebook) *
+                        static_cast<size_t>(conditional.sequence_length) +
+                    static_cast<size_t>(conditional.target_start) +
+                    static_cast<size_t>(frame);
+                conditional.input_ids[index] =
+                    ((codebook * conditional.target_frames + frame) %
+                     (config.audio_vocab_size - 1)) +
+                    1;
+            }
+        }
+        status = model->run_diffusion_graph(
+            conditional,
+            unconditional,
+            packed);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float reverse_reuse_invariance_error = maximum_error(
+            packed.unconditional_target_logits,
+            changed_unconditional);
 
         const bool cuda_device = std::string(device_name) != "CPU";
         const float logits_tolerance = cuda_device ? 8e-3f : 5e-3f;
+        model->release_diffusion_graph();
+        status = model->init_diffusion_graph(
+            conditional,
+            unconditional,
+            true,
+            0.0f);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        omnivoice::OmniVoiceLmPackedOutput unguided;
+        status = model->run_diffusion_graph(
+            conditional,
+            unconditional,
+            unguided);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        selector_input.cond_logits = &unguided.conditional_target_logits;
+        selector_input.uncond_logits =
+            &unguided.unconditional_target_logits;
+        selector_input.top_k = static_cast<int32_t>(all_masked.size());
+        selector_options.guidance_scale = 0.0f;
+        selector_options.layer_penalty_factor = 5.0f;
+        omnivoice::TokenSelectionOutput unguided_reference;
+        status = selector.select(
+            selector_input,
+            selector_options,
+            unguided_reference);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        const float unguided_confidence_error = maximum_error(
+            unguided.confidence,
+            unguided_reference.confidence);
+        const bool unguided_predictions_match =
+            unguided.predictions == unguided_reference.predictions;
         std::cout << "merged_diffusion_golden_max_error: "
                   << golden_error << '\n'
+                  << "merged_diffusion_unconditional_max_error: "
+                  << unconditional_reference_error << '\n'
                   << "merged_diffusion_confidence_max_error: "
                   << confidence_error << '\n'
                   << "merged_diffusion_predictions_match: "
                   << (predictions_match ? "true" : "false") << '\n'
                   << "merged_diffusion_reuse_invariance_error: "
-                  << reuse_invariance_error << '\n';
+                  << reuse_invariance_error << '\n'
+                  << "merged_diffusion_reverse_invariance_error: "
+                  << reverse_reuse_invariance_error << '\n'
+                  << "merged_diffusion_unguided_confidence_error: "
+                  << unguided_confidence_error << '\n'
+                  << "merged_diffusion_unguided_predictions_match: "
+                  << (unguided_predictions_match ? "true" : "false")
+                  << '\n';
 
         model.reset();
         ggml_backend_free(backend);
         if (!std::isfinite(golden_error) ||
             golden_error > logits_tolerance ||
+            !std::isfinite(unconditional_reference_error) ||
+            unconditional_reference_error > logits_tolerance ||
             !std::isfinite(confidence_error) ||
             confidence_error > logits_tolerance ||
             !predictions_match ||
             !std::isfinite(reuse_invariance_error) ||
-            reuse_invariance_error > logits_tolerance) {
+            reuse_invariance_error > logits_tolerance ||
+            !std::isfinite(reverse_reuse_invariance_error) ||
+            reverse_reuse_invariance_error > logits_tolerance ||
+            !std::isfinite(unguided_confidence_error) ||
+            unguided_confidence_error > logits_tolerance ||
+            !unguided_predictions_match) {
             return 1;
         }
         return 0;

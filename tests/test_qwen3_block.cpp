@@ -157,6 +157,203 @@ void copy_float_tensor(ggml_tensor* tensor, const std::vector<float>& data) {
         data.size() * sizeof(float));
 }
 
+std::vector<float> run_single_block(
+    ggml_backend_t backend,
+    const omnivoice::Qwen3Config& config,
+    const omnivoice::Qwen3BlockWeights& weights,
+    int64_t hidden,
+    int64_t sequence,
+    const std::vector<float>& input_values) {
+    std::vector<uint8_t> graph_metadata(
+        ggml_tensor_overhead() * 2048 + ggml_graph_overhead());
+    ggml_init_params graph_params{};
+    graph_params.mem_size = graph_metadata.size();
+    graph_params.mem_buffer = graph_metadata.data();
+    graph_params.no_alloc = true;
+    ggml_context* graph_context = ggml_init(graph_params);
+    if (graph_context == nullptr) {
+        throw std::runtime_error("failed to create packed test graph context");
+    }
+
+    ggml_tensor* input = ggml_new_tensor_2d(
+        graph_context,
+        GGML_TYPE_F32,
+        hidden,
+        sequence);
+    ggml_set_input(input);
+    ggml_tensor* positions = ggml_new_tensor_1d(
+        graph_context,
+        GGML_TYPE_I32,
+        sequence);
+    ggml_set_input(positions);
+    ggml_tensor* output = omnivoice::build_qwen3_block(
+        graph_context,
+        config,
+        weights,
+        input,
+        positions,
+        nullptr);
+    ggml_set_output(output);
+    ggml_cgraph* graph = ggml_new_graph_custom(
+        graph_context,
+        4096,
+        false);
+    ggml_build_forward_expand(graph, output);
+
+    omnivoice::BackendScheduler scheduler;
+    omnivoice::Status status = scheduler.create(backend, 4096);
+    if (!status) {
+        ggml_free(graph_context);
+        throw std::runtime_error(status.message());
+    }
+    ggml_backend_sched_reset(scheduler.get());
+    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
+        scheduler.reset();
+        ggml_free(graph_context);
+        throw std::runtime_error("failed to allocate single block graph");
+    }
+    ggml_backend_tensor_set(
+        input,
+        input_values.data(),
+        0,
+        input_values.size() * sizeof(float));
+    std::vector<int32_t> position_values(static_cast<size_t>(sequence));
+    for (int64_t index = 0; index < sequence; ++index) {
+        position_values[static_cast<size_t>(index)] =
+            static_cast<int32_t>(index);
+    }
+    ggml_backend_tensor_set(
+        positions,
+        position_values.data(),
+        0,
+        position_values.size() * sizeof(int32_t));
+    if (ggml_backend_sched_graph_compute(scheduler.get(), graph) !=
+        GGML_STATUS_SUCCESS) {
+        scheduler.reset();
+        ggml_free(graph_context);
+        throw std::runtime_error("single Qwen3 block graph failed");
+    }
+
+    std::vector<float> output_values(
+        static_cast<size_t>(hidden * sequence));
+    ggml_backend_tensor_get(
+        output,
+        output_values.data(),
+        0,
+        output_values.size() * sizeof(float));
+    scheduler.reset();
+    ggml_free(graph_context);
+    return output_values;
+}
+
+std::vector<float> run_packed_block(
+    ggml_backend_t backend,
+    const omnivoice::Qwen3Config& config,
+    const omnivoice::Qwen3BlockWeights& weights,
+    int64_t hidden,
+    int64_t sequence,
+    int64_t first_sequence,
+    const std::vector<float>& input_values) {
+    std::vector<uint8_t> graph_metadata(
+        ggml_tensor_overhead() * 2048 + ggml_graph_overhead());
+    ggml_init_params graph_params{};
+    graph_params.mem_size = graph_metadata.size();
+    graph_params.mem_buffer = graph_metadata.data();
+    graph_params.no_alloc = true;
+    ggml_context* graph_context = ggml_init(graph_params);
+    if (graph_context == nullptr) {
+        throw std::runtime_error("failed to create packed test graph context");
+    }
+
+    ggml_tensor* input = ggml_new_tensor_2d(
+        graph_context,
+        GGML_TYPE_F32,
+        hidden,
+        sequence);
+    ggml_set_input(input);
+    ggml_tensor* first_positions = ggml_new_tensor_1d(
+        graph_context,
+        GGML_TYPE_I32,
+        first_sequence);
+    ggml_set_input(first_positions);
+    ggml_tensor* second_positions = ggml_new_tensor_1d(
+        graph_context,
+        GGML_TYPE_I32,
+        sequence - first_sequence);
+    ggml_set_input(second_positions);
+    ggml_tensor* output = omnivoice::build_qwen3_packed_block(
+        graph_context,
+        config,
+        weights,
+        input,
+        first_positions,
+        second_positions,
+        first_sequence);
+    ggml_set_output(output);
+    ggml_cgraph* graph = ggml_new_graph_custom(
+        graph_context,
+        8192,
+        false);
+    ggml_build_forward_expand(graph, output);
+
+    omnivoice::BackendScheduler scheduler;
+    omnivoice::Status status = scheduler.create(backend, 8192);
+    if (!status) {
+        ggml_free(graph_context);
+        throw std::runtime_error(status.message());
+    }
+    ggml_backend_sched_reset(scheduler.get());
+    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
+        scheduler.reset();
+        ggml_free(graph_context);
+        throw std::runtime_error("failed to allocate packed block graph");
+    }
+    ggml_backend_tensor_set(
+        input,
+        input_values.data(),
+        0,
+        input_values.size() * sizeof(float));
+    std::vector<int32_t> first_position_values(
+        static_cast<size_t>(first_sequence));
+    std::vector<int32_t> second_position_values(
+        static_cast<size_t>(sequence - first_sequence));
+    for (int64_t index = 0; index < first_sequence; ++index) {
+        first_position_values[static_cast<size_t>(index)] =
+            static_cast<int32_t>(index);
+    }
+    for (int64_t index = 0; index < sequence - first_sequence; ++index) {
+        second_position_values[static_cast<size_t>(index)] =
+            static_cast<int32_t>(index);
+    }
+    ggml_backend_tensor_set(
+        first_positions,
+        first_position_values.data(),
+        0,
+        first_position_values.size() * sizeof(int32_t));
+    ggml_backend_tensor_set(
+        second_positions,
+        second_position_values.data(),
+        0,
+        second_position_values.size() * sizeof(int32_t));
+    if (ggml_backend_sched_graph_compute(scheduler.get(), graph) !=
+        GGML_STATUS_SUCCESS) {
+        scheduler.reset();
+        ggml_free(graph_context);
+        throw std::runtime_error("packed Qwen3 block graph failed");
+    }
+
+    std::vector<float> output_values(
+        static_cast<size_t>(hidden * sequence));
+    ggml_backend_tensor_get(
+        output,
+        output_values.data(),
+        0,
+        output_values.size() * sizeof(float));
+    scheduler.reset();
+    ggml_free(graph_context);
+    return output_values;
+}
+
 } // namespace
 
 int main() {
@@ -404,10 +601,148 @@ int main() {
         }
         std::cout << "qwen3_block_max_error: " << max_error << '\n';
 
+        scheduler.reset();
         ggml_free(graph_context);
+        graph_context = nullptr;
+
+        if (fixture.sequence < 2) {
+            throw std::runtime_error(
+                "packed block fixture sequence is too short");
+        }
+        const int64_t hidden_size = fixture.hidden;
+        const int64_t sequence = fixture.sequence;
+        const int64_t first_sequence = std::max<int64_t>(1, sequence / 2);
+        const int64_t second_sequence = sequence - first_sequence;
+        const size_t first_values_count =
+            static_cast<size_t>(hidden_size * first_sequence);
+        const size_t second_values_count =
+            static_cast<size_t>(hidden_size * second_sequence);
+        std::vector<float> first_input(
+            fixture.input.begin(),
+            fixture.input.begin() +
+                static_cast<std::ptrdiff_t>(first_values_count));
+        std::vector<float> second_input(
+            fixture.input.begin() +
+                static_cast<std::ptrdiff_t>(first_values_count),
+            fixture.input.end());
+        const std::vector<float> first_expected = run_single_block(
+            backend,
+            config,
+            weights,
+            hidden_size,
+            first_sequence,
+            first_input);
+        const std::vector<float> second_expected = run_single_block(
+            backend,
+            config,
+            weights,
+            hidden_size,
+            second_sequence,
+            second_input);
+        std::vector<float> packed_input = fixture.input;
+        const std::vector<float> packed_actual = run_packed_block(
+            backend,
+            config,
+            weights,
+            hidden_size,
+            sequence,
+            first_sequence,
+            packed_input);
+
+        const auto segment_error = [](
+            const std::vector<float>& actual,
+            size_t actual_offset,
+            const std::vector<float>& expected,
+            size_t count) {
+            float error = 0.0f;
+            for (size_t index = 0; index < count; ++index) {
+                error = std::max(
+                    error,
+                    std::abs(actual[actual_offset + index] -
+                             expected[index]));
+            }
+            return error;
+        };
+        const float first_packed_error = segment_error(
+            packed_actual,
+            0,
+            first_expected,
+            first_values_count);
+        const float second_packed_error = segment_error(
+            packed_actual,
+            first_values_count,
+            second_expected,
+            second_values_count);
+
+        for (size_t index = 0; index < second_values_count; ++index) {
+            packed_input[first_values_count + index] +=
+                0.05f * static_cast<float>(index % 7);
+        }
+        const std::vector<float> packed_second_changed =
+            run_packed_block(
+                backend,
+                config,
+                weights,
+                hidden_size,
+                sequence,
+                first_sequence,
+                packed_input);
+        const float first_branch_cross_talk = segment_error(
+            packed_second_changed,
+            0,
+            packed_actual,
+            first_values_count);
+
+        for (size_t index = 0; index < first_values_count; ++index) {
+            packed_input[index] -= 0.04f * static_cast<float>(index % 5);
+        }
+        const std::vector<float> packed_both_changed =
+            run_packed_block(
+                backend,
+                config,
+                weights,
+                hidden_size,
+                sequence,
+                first_sequence,
+                packed_input);
+        const std::vector<float> changed_second(
+            packed_second_changed.begin() +
+                static_cast<std::ptrdiff_t>(first_values_count),
+            packed_second_changed.end());
+        const float second_branch_cross_talk = segment_error(
+            packed_both_changed,
+            first_values_count,
+            changed_second,
+            second_values_count);
+
+        const bool cuda_device =
+            std::string(device_name) != "CPU";
+        const float packed_tolerance =
+            cuda_device ? 2e-3f : 2e-5f;
+        const float cross_talk_tolerance =
+            cuda_device ? 2e-5f : 1e-7f;
+        std::cout << "qwen3_packed_first_max_error: "
+                  << first_packed_error << '\n'
+                  << "qwen3_packed_second_max_error: "
+                  << second_packed_error << '\n'
+                  << "qwen3_packed_first_cross_talk_error: "
+                  << first_branch_cross_talk << '\n'
+                  << "qwen3_packed_second_cross_talk_error: "
+                  << second_branch_cross_talk << '\n';
+
         ggml_backend_buffer_free(weight_buffer);
         ggml_free(weight_context);
         ggml_backend_free(backend);
+        if (!std::isfinite(first_packed_error) ||
+            first_packed_error > packed_tolerance ||
+            !std::isfinite(second_packed_error) ||
+            second_packed_error > packed_tolerance ||
+            !std::isfinite(first_branch_cross_talk) ||
+            first_branch_cross_talk > cross_talk_tolerance ||
+            !std::isfinite(second_branch_cross_talk) ||
+            second_branch_cross_talk > cross_talk_tolerance) {
+            return 1;
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Qwen3 block test failed: " << error.what() << '\n';
