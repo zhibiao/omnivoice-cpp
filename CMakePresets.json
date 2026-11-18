@@ -18,7 +18,7 @@
       "name": "windows-base",
       "hidden": true,
       "inherits": "base",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "x64"
     },
     {
@@ -33,8 +33,22 @@
       "name": "windows-cuda",
       "displayName": "Windows x64 CPU + CUDA",
       "inherits": "windows-base",
+      "environment": {
+        "CudaToolkitDir": "$env{CUDA_PATH}/",
+        "PATH": "$env{CUDA_PATH}/bin;$env{CUDA_PATH}/bin/x64;$penv{PATH}"
+      },
       "cacheVariables": {
-        "OMNIVOICE_ENABLE_CUDA": "ON"
+        "CUDAToolkit_ROOT": "$env{CUDA_PATH}",
+        "OMNIVOICE_ENABLE_CUDA": "ON",
+        "OMNIVOICE_CUDA_ARCHITECTURES": "native"
+      }
+    },
+    {
+      "name": "windows-cuda-portable",
+      "displayName": "Windows x64 CPU + CUDA portable",
+      "inherits": "windows-cuda",
+      "cacheVariables": {
+        "OMNIVOICE_CUDA_ARCHITECTURES": "75-real;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real"
       }
     },
     {
@@ -59,7 +73,16 @@
       "displayName": "Linux CPU + CUDA",
       "inherits": "linux-base",
       "cacheVariables": {
-        "OMNIVOICE_ENABLE_CUDA": "ON"
+        "OMNIVOICE_ENABLE_CUDA": "ON",
+        "OMNIVOICE_CUDA_ARCHITECTURES": "native"
+      }
+    },
+    {
+      "name": "linux-cuda-portable",
+      "displayName": "Linux CPU + CUDA portable",
+      "inherits": "linux-cuda",
+      "cacheVariables": {
+        "OMNIVOICE_CUDA_ARCHITECTURES": "75-real;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real"
       }
     }
   ],
@@ -77,6 +100,12 @@
       "jobs": 0
     },
     {
+      "name": "windows-cuda-portable",
+      "configurePreset": "windows-cuda-portable",
+      "configuration": "Release",
+      "jobs": 0
+    },
+    {
       "name": "linux-cpu",
       "configurePreset": "linux-cpu",
       "jobs": 0
@@ -84,6 +113,11 @@
     {
       "name": "linux-cuda",
       "configurePreset": "linux-cuda",
+      "jobs": 0
+    },
+    {
+      "name": "linux-cuda-portable",
+      "configurePreset": "linux-cuda-portable",
       "jobs": 0
     }
   ],
@@ -115,6 +149,19 @@
       }
     },
     {
+      "name": "windows-cuda-portable-assets",
+      "configurePreset": "windows-cuda-portable",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "requires-assets"
+        }
+      }
+    },
+    {
       "name": "linux-cpu-portable",
       "configurePreset": "linux-cpu",
       "output": {
@@ -129,6 +176,18 @@
     {
       "name": "linux-cuda-assets",
       "configurePreset": "linux-cuda",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "requires-assets"
+        }
+      }
+    },
+    {
+      "name": "linux-cuda-portable-assets",
+      "configurePreset": "linux-cuda-portable",
       "output": {
         "outputOnFailure": true
       },

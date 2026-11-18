@@ -7,7 +7,7 @@ Linux x86_64；CUDA 是可选后端，需要额外的 NVIDIA 工具链和显卡�
 
 | 平台 | 推荐编译器 | 生成器 | 默认后端 |
 |---|---|---|---|
-| Windows 10/11 x64 | Visual Studio 2022 | Visual Studio 17 2022 | CPU |
+| Windows 10/11 x64 | Visual Studio 2026 | Visual Studio 18 2026 | CPU |
 | Linux x86_64 | GCC 11+ 或 Clang 14+ | Unix Makefiles | CPU |
 
 通用要求：
@@ -18,7 +18,7 @@ Linux x86_64；CUDA 是可选后端，需要额外的 NVIDIA 工具链和显卡�
 
 ## Windows
 
-安装 Visual Studio 2022 的“使用 C++ 的桌面开发”工作负载。
+安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载。
 
 CPU 构建：
 
@@ -37,11 +37,9 @@ build/windows-cpu/bin/Release/omnivoice-cli.exe
 CUDA 构建：
 
 ```powershell
-$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2"
-$env:PATH = "$env:CUDA_PATH\bin;$env:CUDA_PATH\bin\x64;$env:PATH"
+$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.5"
 
-cmake --preset windows-cuda `
-  -DCMAKE_CUDA_COMPILER="$env:CUDA_PATH\bin\nvcc.exe"
+cmake --preset windows-cuda
 cmake --build --preset windows-cuda
 ```
 
@@ -84,15 +82,50 @@ export CUDACXX=/usr/local/cuda/bin/nvcc
 cmake --preset linux-cuda
 ```
 
-## CUDA 架构
+## 验证构建
 
-默认架构列表位于项目根目录的 `CMakeLists.txt`：
+Windows：
 
-```text
-75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real
+```powershell
+.\build\windows-cpu\bin\Release\omnivoice-cli.exe --list-devices
+.\build\windows-cuda\bin\Release\omnivoice-cli.exe --list-devices
 ```
 
-可用 CMake 参数覆盖：
+Linux：
+
+```bash
+./build/linux-cpu/bin/omnivoice-cli --list-devices
+./build/linux-cuda/bin/omnivoice-cli --list-devices
+```
+
+CUDA 构建需要能够加载 CUDA backend；Windows 运行前应确保 CUDA 运行库目录
+位于 `PATH` 中，Linux 运行前应确保 CUDA 运行库可被动态链接器找到。
+
+## CUDA 架构
+
+`windows-cuda` 和 `linux-cuda` 默认使用 `native`，只编译构建机上探测到的 GPU
+架构。例如构建机只有 RTX 2060 时，最终会使用 `75-real`。
+
+需要兼容多代 GPU 时，使用 portable preset：
+
+```powershell
+$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.5"
+cmake --preset windows-cuda-portable
+cmake --build --preset windows-cuda-portable
+```
+
+```bash
+cmake --preset linux-cuda-portable
+cmake --build --preset linux-cuda-portable
+```
+
+portable preset 使用以下架构：
+
+```text
+75-real;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real
+```
+
+普通 CUDA preset 也可以用 CMake 参数临时覆盖：
 
 ```bash
 cmake --preset linux-cuda \
@@ -101,9 +134,11 @@ cmake --preset linux-cuda \
 
 建议：
 
-- 只在本机运行：使用构建机器的 `native` 对应架构，例如 RTX A4000 使用
-  `86-real`。
-- 发布通用 CUDA 包：保留 `-real` 与 `-virtual` 组合。
+- 只在本机运行：使用默认的 `native`。
+- 发布通用 CUDA 包：使用 `windows-cuda-portable` 或
+  `linux-cuda-portable`。
+- 没有 GPU 的构建机：不能使用 `native`，应显式指定架构或使用 portable
+  preset。
 - 架构列表越长，编译时间和二进制体积越大。
 
 ## 路径约定

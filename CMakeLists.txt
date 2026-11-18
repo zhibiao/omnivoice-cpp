@@ -39,9 +39,9 @@ option(
 
 set(
     OMNIVOICE_CUDA_ARCHITECTURES
-    "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real"
+    "native"
     CACHE STRING
-    "CUDA architectures: -real = SASS, -virtual = PTX JIT, no suffix = both"
+    "CUDA architectures: native or a semicolon-separated list; -real = SASS, -virtual = PTX JIT"
 )
 
 if(OMNIVOICE_ENABLE_CUDA)

@@ -41,45 +41,14 @@ GGUF，不依赖 Python、PyTorch 或 Transformers。
 显式启用。详细依赖、CUDA 工具链和路径设置见
 [docs/BUILDING.md](docs/BUILDING.md)。
 
-Windows CPU：
+Windows CPU 快速开始：
 
 ```powershell
 cmake --preset windows-cpu
 cmake --build --preset windows-cpu
 ```
 
-Linux CPU：
-
-```bash
-cmake --preset linux-cpu
-cmake --build --preset linux-cpu
-```
-
-Windows CUDA：
-
-```powershell
-cmake --preset windows-cuda `
-  -DCMAKE_CUDA_COMPILER="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin\nvcc.exe"
-cmake --build --preset windows-cuda
-```
-
-Linux CUDA：
-
-```bash
-cmake --preset linux-cuda \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
-cmake --build --preset linux-cuda
-```
-
-查看设备：
-
-```powershell
-.\build\windows-cuda\bin\Release\omnivoice-cli.exe --list-devices
-```
-
-```bash
-./build/linux-cuda/bin/omnivoice-cli --list-devices
-```
+Linux、CUDA、portable CUDA、测试命令和设备检查统一参见构建文档。
 
 ## 模型转换
 
@@ -186,14 +155,19 @@ Linux：
 
 ## 当前性能
 
-相同负载：9.04 秒音频、8 x 221 target cells、32 步扩散、CUDA backend。
+相同负载：实际生成 9.04 秒音频、8 x 221 target cells、32 步扩散、
+CUDA backend、默认后处理；目标文本为上文示例中文句重复两次。RTX 2060
+数据为 3 次运行的中位数。
 
 | LM | RTX 2060 RTF | RTX A4000 RTF | RTX 5070 Ti RTF |
 |---|---:|---:|---:|
-| Q8_0 | 0.301 | 0.126 | 0.063 |
-| BF16 | 0.765 | 0.144 | 0.100 |
+| Q8_0 | 0.290 | 0.126 | 0.063 |
+| F16 | 0.262 | - | - |
+| BF16 | 0.764 | 0.144 | 0.100 |
 
-RTX A4000 和 RTX 5070 Ti 为 packed 单图版本实测；RTX 2060 为早期双图版本记录。
+RTX 2060 实测环境：Ryzen 7 4800H、GeForce RTX 2060 6 GB、驱动
+616.92（CUDA UMD 13.4）、CUDA Toolkit 13.5、Visual Studio 2026、
+`native` 架构解析为 `75-real`。
 
 ## 目录
 
