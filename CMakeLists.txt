@@ -33,7 +33,7 @@ option(
 
 set(
     OMNIVOICE_CUDA_ARCHITECTURES
-    ""
+    "75-real"
     CACHE STRING
     "CUDA architectures: -real = SASS, -virtual = PTX"
 )
@@ -95,10 +95,13 @@ omnivoice_configure_target(omnivoice-core)
 target_include_directories(omnivoice-core PUBLIC
     ${PROJECT_SOURCE_DIR}/src
 )
+target_include_directories(omnivoice-core PRIVATE
+    ${PROJECT_SOURCE_DIR}/vendor
+)
+target_compile_definitions(omnivoice-core PRIVATE
+    UNI_ALGO_STATIC_DATA
+)
 target_link_libraries(omnivoice-core PUBLIC ggml)
-if(WIN32)
-    target_link_libraries(omnivoice-core PRIVATE normaliz)
-endif()
 
 add_executable(omnivoice-cli
     app/omnivoice_cli.cpp
