@@ -10,11 +10,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
-#include <winnls.h>
-#endif
+#include <uni-algo-1.2.0/prop.h>
 
 namespace omnivoice {
 
@@ -225,56 +221,6 @@ ScriptWeight range_weight(char32_t value) {
         : it->weight;
 }
 
-#if defined(_WIN32)
-void fill_utf16(char32_t value, WCHAR (&buffer)[2], int& length) {
-    if (value <= 0xffff) {
-        buffer[0] = static_cast<WCHAR>(value);
-        length = 1;
-        return;
-    }
-    value -= 0x10000;
-    buffer[0] = static_cast<WCHAR>(0xd800 + (value >> 10));
-    buffer[1] = static_cast<WCHAR>(0xdc00 + (value & 0x3ff));
-    length = 2;
-}
-
-bool unicode_category_weight(char32_t value, double& weight) {
-    WCHAR buffer[2] = {};
-    int length = 0;
-    fill_utf16(value, buffer, length);
-    WORD type1 = 0;
-    WORD type3 = 0;
-    if (!GetStringTypeW(CT_CTYPE1, buffer, length, &type1) ||
-        !GetStringTypeW(CT_CTYPE3, buffer, length, &type3)) {
-        return false;
-    }
-    const bool nonspacing_mark =
-        (type3 & (C3_NONSPACING | C3_DIACRITIC)) != 0 &&
-        (type3 & C3_ALPHA) == 0;
-    const bool spacing_mark =
-        (type3 & C3_VOWELMARK) != 0 &&
-        (type3 & C3_ALPHA) == 0;
-    if (nonspacing_mark || spacing_mark) {
-        weight = 0.0;
-        return true;
-    }
-    if ((type1 & C1_PUNCT) != 0 ||
-        (value >= 0x2000 && (type3 & C3_SYMBOL) != 0)) {
-        weight = 0.5;
-        return true;
-    }
-    if ((type1 & C1_SPACE) != 0) {
-        weight = 0.2;
-        return true;
-    }
-    if ((type1 & C1_DIGIT) != 0) {
-        weight = 3.5;
-        return true;
-    }
-    return false;
-}
-#endif
-
 double character_weight(char32_t value) {
     if ((value >= U'A' && value <= U'Z') ||
         (value >= U'a' && value <= U'z')) {
@@ -286,22 +232,21 @@ double character_weight(char32_t value) {
     if (value == 0x0640) {
         return 0.0;
     }
-    if (value > 0xffff) {
-        if (value >= 0x1f000 && value <= 0x1faff) {
-            return 0.5;
-        }
-        if (value > 0x20000) {
-            return 3.0;
-        }
-        return 1.0;
-    }
 
-#if defined(_WIN32)
-    double category_weight = 0.0;
-    if (unicode_category_weight(value, category_weight)) {
-        return category_weight;
+    const una::codepoint::prop category{value};
+    if (category.General_Category_M()) {
+        return 0.0;
     }
-#endif
+    if (category.General_Category_P() ||
+        category.General_Category_S()) {
+        return 0.5;
+    }
+    if (category.General_Category_Z()) {
+        return 0.2;
+    }
+    if (category.General_Category_N()) {
+        return 3.5;
+    }
 
     if (value > 0x20000) {
         return 3.0;

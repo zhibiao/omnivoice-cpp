@@ -1,19 +1,40 @@
+set(
+    OMNIVOICE_TEST_DATA_DIR
+    "${PROJECT_SOURCE_DIR}/testdata"
+    CACHE PATH
+    "Directory containing generated golden test data"
+)
+set(
+    OMNIVOICE_MODEL_DIR
+    "${PROJECT_SOURCE_DIR}/models"
+    CACHE PATH
+    "Directory containing converted GGUF models"
+)
+file(TO_CMAKE_PATH "${OMNIVOICE_TEST_DATA_DIR}" OMNIVOICE_TEST_DATA_DIR)
+file(TO_CMAKE_PATH "${OMNIVOICE_MODEL_DIR}" OMNIVOICE_MODEL_DIR)
+
 function(omnivoice_add_test target test_name)
     add_executable(${target} ${target}.cpp)
+    omnivoice_configure_target(${target})
     target_link_libraries(${target} PRIVATE omnivoice-core)
     target_include_directories(${target} PRIVATE
         ${CMAKE_SOURCE_DIR}/vendor
     )
     target_compile_definitions(${target} PRIVATE
-        OMNIVOICE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/testdata"
+        OMNIVOICE_TEST_DATA_DIR="${OMNIVOICE_TEST_DATA_DIR}"
     )
     add_test(NAME ${test_name} COMMAND ${target})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "requires-assets"
+    )
 endfunction()
 
 function(omnivoice_add_cuda_test test_name target)
     add_test(NAME ${test_name} COMMAND ${target})
     set_tests_properties(${test_name} PROPERTIES
-        ENVIRONMENT "OMNIVOICE_TEST_DEVICE=CUDA0"
+        ENVIRONMENT
+            "OMNIVOICE_TEST_DEVICE=CUDA0;NVIDIA_TF32_OVERRIDE=0"
+        LABELS "requires-assets;cuda"
         SKIP_RETURN_CODE 77
         TIMEOUT 120
     )
@@ -36,7 +57,7 @@ endif()
 
 omnivoice_add_test(test_omnivoice_lm omnivoice_lm)
 target_compile_definitions(test_omnivoice_lm PRIVATE
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-f32.gguf"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
 )
 set_tests_properties(omnivoice_lm PROPERTIES
     SKIP_RETURN_CODE 77
@@ -55,7 +76,7 @@ endif()
 omnivoice_add_test(test_diffusion_decoder omnivoice_diffusion_decoder)
 omnivoice_add_test(test_higgs_decoder omnivoice_higgs_decoder)
 target_compile_definitions(test_higgs_decoder PRIVATE
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 set_tests_properties(omnivoice_higgs_decoder PROPERTIES
     SKIP_RETURN_CODE 77
@@ -70,7 +91,7 @@ endif()
 
 omnivoice_add_test(test_higgs_encoder omnivoice_higgs_encoder)
 target_compile_definitions(test_higgs_encoder PRIVATE
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 set_tests_properties(omnivoice_higgs_encoder PROPERTIES
     SKIP_RETURN_CODE 77
@@ -92,11 +113,19 @@ omnivoice_add_test(
     test_voice_clone_prompt
     omnivoice_voice_clone_prompt
 )
+set_tests_properties(
+    omnivoice_types
+    omnivoice_wav_writer
+    omnivoice_audio_io
+    omnivoice_voice_clone_prompt
+    PROPERTIES
+    LABELS "portable"
+)
 
 omnivoice_add_test(test_omnivoice_context omnivoice_context)
 target_compile_definitions(test_omnivoice_context PRIVATE
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-f32.gguf"
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 set_tests_properties(omnivoice_context PROPERTIES
     SKIP_RETURN_CODE 77
@@ -111,8 +140,8 @@ endif()
 
 omnivoice_add_test(test_voice_clone omnivoice_voice_clone)
 target_compile_definitions(test_voice_clone PRIVATE
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-f32.gguf"
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 set_tests_properties(omnivoice_voice_clone PROPERTIES
     SKIP_RETURN_CODE 77
@@ -121,8 +150,8 @@ set_tests_properties(omnivoice_voice_clone PROPERTIES
 
 omnivoice_add_test(test_voice_clone_e2e omnivoice_voice_clone_e2e)
 target_compile_definitions(test_voice_clone_e2e PRIVATE
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-f32.gguf"
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 set_tests_properties(omnivoice_voice_clone_e2e PROPERTIES
     SKIP_RETURN_CODE 77
@@ -133,14 +162,15 @@ add_executable(
     test_voice_clone_extended
     test_voice_clone_extended.cpp
 )
+omnivoice_configure_target(test_voice_clone_extended)
 target_link_libraries(
     test_voice_clone_extended
     PRIVATE omnivoice-core
 )
 target_compile_definitions(test_voice_clone_extended PRIVATE
-    OMNIVOICE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/testdata"
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-q8_0.gguf"
-    OMNIVOICE_AUDIO_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-tokenizer-f32.gguf"
+    OMNIVOICE_TEST_DATA_DIR="${OMNIVOICE_TEST_DATA_DIR}"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-q8_0.gguf"
+    OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
 if(OMNIVOICE_ENABLE_CUDA)
     add_test(
@@ -148,7 +178,9 @@ if(OMNIVOICE_ENABLE_CUDA)
         COMMAND test_voice_clone_extended
     )
     set_tests_properties(omnivoice_voice_clone_q8_cuda PROPERTIES
-        ENVIRONMENT "OMNIVOICE_TEST_DEVICE=CUDA0"
+        ENVIRONMENT
+            "OMNIVOICE_TEST_DEVICE=CUDA0;NVIDIA_TF32_OVERRIDE=0"
+        LABELS "requires-assets;cuda"
         SKIP_RETURN_CODE 77
         TIMEOUT 600
     )
@@ -156,7 +188,7 @@ endif()
 
 omnivoice_add_test(test_omnivoice_lm_prompt omnivoice_lm_prompt)
 target_compile_definitions(test_omnivoice_lm_prompt PRIVATE
-    OMNIVOICE_LM_GGUF="${CMAKE_SOURCE_DIR}/models/omnivoice-lm-f32.gguf"
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
 )
 set_tests_properties(omnivoice_lm_prompt PROPERTIES
     SKIP_RETURN_CODE 77
@@ -168,7 +200,9 @@ if(OMNIVOICE_ENABLE_CUDA)
         COMMAND test_omnivoice_lm_prompt
     )
     set_tests_properties(omnivoice_lm_prompt_cuda PROPERTIES
-        ENVIRONMENT "OMNIVOICE_TEST_DEVICE=CUDA0"
+        ENVIRONMENT
+            "OMNIVOICE_TEST_DEVICE=CUDA0;NVIDIA_TF32_OVERRIDE=0"
+        LABELS "requires-assets;cuda"
         SKIP_RETURN_CODE 77
         TIMEOUT 600
     )
@@ -177,7 +211,9 @@ if(OMNIVOICE_ENABLE_CUDA)
         COMMAND test_voice_clone
     )
     set_tests_properties(omnivoice_voice_clone_cuda PROPERTIES
-        ENVIRONMENT "OMNIVOICE_TEST_DEVICE=CUDA0"
+        ENVIRONMENT
+            "OMNIVOICE_TEST_DEVICE=CUDA0;NVIDIA_TF32_OVERRIDE=0"
+        LABELS "requires-assets;cuda"
         SKIP_RETURN_CODE 77
         TIMEOUT 600
     )
@@ -186,7 +222,9 @@ if(OMNIVOICE_ENABLE_CUDA)
         COMMAND test_voice_clone_e2e
     )
     set_tests_properties(omnivoice_voice_clone_e2e_cuda PROPERTIES
-        ENVIRONMENT "OMNIVOICE_TEST_DEVICE=CUDA0"
+        ENVIRONMENT
+            "OMNIVOICE_TEST_DEVICE=CUDA0;NVIDIA_TF32_OVERRIDE=0"
+        LABELS "requires-assets;cuda"
         SKIP_RETURN_CODE 77
         TIMEOUT 300
     )
@@ -224,4 +262,14 @@ add_test(
 set_tests_properties(
     omnivoice_cli_prompt_requires_args
     PROPERTIES WILL_FAIL TRUE
+)
+set_tests_properties(
+    omnivoice_cli_version
+    omnivoice_cli_list_devices
+    omnivoice_cli_help
+    omnivoice_cli_unknown_option
+    omnivoice_cli_clone_requires_args
+    omnivoice_cli_prompt_requires_args
+    PROPERTIES
+    LABELS "portable;cli"
 )

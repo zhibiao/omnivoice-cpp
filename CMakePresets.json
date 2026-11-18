@@ -1,0 +1,142 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64"
+    },
+    {
+      "name": "windows-cpu",
+      "displayName": "Windows x64 CPU",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "OMNIVOICE_ENABLE_CUDA": "OFF"
+      }
+    },
+    {
+      "name": "windows-cuda",
+      "displayName": "Windows x64 CPU + CUDA",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "OMNIVOICE_ENABLE_CUDA": "ON"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-cpu",
+      "displayName": "Linux CPU",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "OMNIVOICE_ENABLE_CUDA": "OFF"
+      }
+    },
+    {
+      "name": "linux-cuda",
+      "displayName": "Linux CPU + CUDA",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "OMNIVOICE_ENABLE_CUDA": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-cpu",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release",
+      "jobs": 0
+    },
+    {
+      "name": "windows-cuda",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "jobs": 0
+    },
+    {
+      "name": "linux-cpu",
+      "configurePreset": "linux-cpu",
+      "jobs": 0
+    },
+    {
+      "name": "linux-cuda",
+      "configurePreset": "linux-cuda",
+      "jobs": 0
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-cpu-portable",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "portable"
+        }
+      }
+    },
+    {
+      "name": "windows-cuda-assets",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "requires-assets"
+        }
+      }
+    },
+    {
+      "name": "linux-cpu-portable",
+      "configurePreset": "linux-cpu",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "portable"
+        }
+      }
+    },
+    {
+      "name": "linux-cuda-assets",
+      "configurePreset": "linux-cuda",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "requires-assets"
+        }
+      }
+    }
+  ]
+}

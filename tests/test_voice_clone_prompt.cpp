@@ -53,25 +53,34 @@ bool write_bytes(
     return static_cast<bool>(output);
 }
 
+std::string utf8_string(const std::filesystem::path& path) {
+    return path.u8string();
+}
+
 } // namespace
 
 int main() {
-    const std::filesystem::path data_dir = OMNIVOICE_TEST_DATA_DIR;
+    const std::filesystem::path data_dir =
+        std::filesystem::temp_directory_path();
     const std::filesystem::path path =
-        data_dir / "test_voice_clone_prompt.ovprompt";
+        data_dir / std::filesystem::u8path(
+            "omnivoice 测试 prompt.ovprompt");
     const std::filesystem::path invalid_path =
-        data_dir / "test_voice_clone_prompt_invalid.ovprompt";
+        data_dir / std::filesystem::u8path(
+            "omnivoice 测试 invalid.ovprompt");
     try {
         const omnivoice::VoiceClonePrompt expected = make_prompt();
         omnivoice::Status status =
-            omnivoice::save_voice_clone_prompt(path.string(), expected);
+            omnivoice::save_voice_clone_prompt(
+                utf8_string(path),
+                expected);
         if (!status) {
             std::cerr << "save failed: " << status.message() << '\n';
             return 1;
         }
         omnivoice::VoiceClonePrompt actual;
         status = omnivoice::load_voice_clone_prompt(
-            path.string(),
+            utf8_string(path),
             actual);
         if (!status || !equal_prompts(actual, expected)) {
             std::cerr << "voice prompt round-trip mismatch\n";
@@ -82,7 +91,7 @@ int main() {
             return 1;
         }
         if (omnivoice::load_voice_clone_prompt(
-                invalid_path.string(),
+                utf8_string(invalid_path),
                 actual)) {
             std::cerr << "bad magic must be rejected\n";
             return 1;
@@ -91,7 +100,7 @@ int main() {
         omnivoice::VoiceClonePrompt invalid = expected;
         invalid.reference_codes.codebooks = 7;
         if (omnivoice::save_voice_clone_prompt(
-                invalid_path.string(),
+                utf8_string(invalid_path),
                 invalid)) {
             std::cerr << "invalid codebook count must be rejected\n";
             return 1;
@@ -122,7 +131,7 @@ int main() {
         truncated.resize(truncated.size() / 2);
         if (!write_bytes(invalid_path, truncated) ||
             omnivoice::load_voice_clone_prompt(
-                invalid_path.string(),
+                utf8_string(invalid_path),
                 actual)) {
             std::cerr << "truncated prompt must be rejected\n";
             return 1;

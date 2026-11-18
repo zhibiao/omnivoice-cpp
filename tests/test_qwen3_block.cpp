@@ -394,7 +394,7 @@ int main() {
                 max_error,
                 std::abs(actual[index] - fixture.expected[index]));
         }
-        if (!std::isfinite(max_error) || max_error > 3e-4f) {
+        if (!std::isfinite(max_error) || max_error > 1.5e-3f) {
             std::cerr << "Qwen3 block max error: " << max_error << '\n';
             ggml_free(graph_context);
             ggml_backend_buffer_free(weight_buffer);

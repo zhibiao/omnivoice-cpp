@@ -108,6 +108,10 @@ std::vector<uint8_t> float32_bytes(
     return bytes;
 }
 
+std::string utf8_string(const std::filesystem::path& path) {
+    return path.u8string();
+}
+
 } // namespace
 
 int main() {
@@ -294,12 +298,13 @@ int main() {
 
     const auto roundtrip_path =
         std::filesystem::temp_directory_path() /
-        "omnivoice_audio_io_roundtrip.wav";
+        std::filesystem::u8path(
+            "omnivoice 跨平台路径 roundtrip.wav");
     paths.push_back(roundtrip_path);
     omnivoice::AudioBuffer source;
     source.samples = {0.0f, 0.25f, -0.25f, 0.5f};
     status = omnivoice::save_wav_24k_mono(
-        roundtrip_path.string(),
+        utf8_string(roundtrip_path),
         source);
     if (!status) {
         std::cerr << "WAV save failed: " << status.message() << '\n';
@@ -308,7 +313,7 @@ int main() {
     }
     omnivoice::AudioBuffer loaded;
     status = omnivoice::load_wav_24k_mono(
-        roundtrip_path.string(),
+        utf8_string(roundtrip_path),
         loaded);
     if (!status || loaded.samples.size() != source.samples.size()) {
         std::cerr << "WAV round-trip failed\n";

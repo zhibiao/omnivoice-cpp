@@ -1,9 +1,11 @@
 #include "voice_clone_prompt.h"
 
 #include "audio_io.h"
+#include "path_utils.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -205,7 +207,7 @@ Status save_voice_clone_prompt(
         return status;
     }
     std::ofstream output(
-        path,
+        detail::path_from_utf8(path),
         std::ios::binary | std::ios::trunc);
     if (!output) {
         return Status::error(
@@ -259,7 +261,9 @@ Status load_voice_clone_prompt(
     const std::string& path,
     VoiceClonePrompt& prompt) {
     prompt = {};
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream input(
+        detail::path_from_utf8(path),
+        std::ios::binary);
     if (!input) {
         return Status::error(
             "failed to open voice prompt: " + path);

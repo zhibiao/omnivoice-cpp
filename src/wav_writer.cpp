@@ -1,5 +1,7 @@
 #include "wav_writer.h"
 
+#include "path_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -68,7 +70,9 @@ Status write_wav(
     header.insert(header.end(), {'d', 'a', 't', 'a'});
     append_u32(header, data_size);
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    std::ofstream file(
+        detail::path_from_utf8(path),
+        std::ios::binary | std::ios::trunc);
     if (!file) {
         return Status::error("failed to open WAV output: " + path);
     }

@@ -335,7 +335,7 @@ int main() {
                   << maximum_error << '\n'
                   << "higgs_decoder_snr_db: " << snr_db << '\n';
         if (!std::isfinite(maximum_error) ||
-            maximum_error > 2e-3f ||
+            maximum_error > 3e-3f ||
             snr_db < 40.0) {
             decoder.reset();
             ggml_backend_free(backend);

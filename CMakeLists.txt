@@ -28,14 +28,14 @@ set(GGML_CCACHE OFF CACHE BOOL "" FORCE)
 option(
     OMNIVOICE_ENABLE_CUDA
     "Build OmniVoice with the GGML CUDA backend"
-    ON
+    OFF
 )
 
 set(
     OMNIVOICE_CUDA_ARCHITECTURES
-    "75-real"
+    "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real"
     CACHE STRING
-    "CUDA architectures: -real = SASS, -virtual = PTX"
+    "CUDA architectures: -real = SASS, -virtual = PTX JIT, no suffix = both"
 )
 
 if(OMNIVOICE_ENABLE_CUDA)

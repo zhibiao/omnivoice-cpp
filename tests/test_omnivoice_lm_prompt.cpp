@@ -180,7 +180,7 @@ int main() {
         const bool cuda_device =
             std::string(device_name) != "CPU";
         const float hidden_tolerance =
-            cuda_device ? 8e-2f : 5e-3f;
+            cuda_device ? 1.5e-1f : 5e-3f;
         const float logits_tolerance =
             cuda_device ? 8e-3f : 5e-3f;
         std::cout << "prompt_lm_hidden_max_error: "

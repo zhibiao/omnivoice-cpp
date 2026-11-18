@@ -1,5 +1,6 @@
 #include "audio_io.h"
 
+#include "path_utils.h"
 #include "wav_writer.h"
 
 #include <algorithm>
@@ -35,7 +36,9 @@ bool range_is_valid(size_t offset, uint64_t size, size_t total) {
 }
 
 Status read_file(const std::string& path, std::vector<uint8_t>& data) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    std::ifstream file(
+        detail::path_from_utf8(path),
+        std::ios::binary | std::ios::ate);
     if (!file) {
         return Status::error("failed to open WAV file: " + path);
     }

@@ -122,6 +122,26 @@ float maximum_error(
     return error;
 }
 
+double signal_to_noise_db(
+    const std::vector<float>& actual,
+    const std::vector<float>& expected) {
+    if (actual.size() != expected.size()) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    double signal_energy = 0.0;
+    double noise_energy = 0.0;
+    for (size_t index = 0; index < actual.size(); ++index) {
+        const double difference = static_cast<double>(
+            actual[index] - expected[index]);
+        signal_energy +=
+            static_cast<double>(expected[index]) * expected[index];
+        noise_energy += difference * difference;
+    }
+    return noise_energy > 0.0
+        ? 10.0 * std::log10(signal_energy / noise_energy)
+        : std::numeric_limits<double>::infinity();
+}
+
 } // namespace
 
 int main() {
@@ -236,6 +256,8 @@ int main() {
         }
 
         float worst_stage_error = 0.0f;
+        double worst_stage_snr_db =
+            std::numeric_limits<double>::infinity();
         for (size_t index = 0; index < stages.size(); ++index) {
             const auto& actual = stages[index];
             const auto& expected = fixture.stages[index];
@@ -249,7 +271,14 @@ int main() {
                     : std::numeric_limits<float>::infinity();
             std::cout << "higgs_encoder_stage_"
                       << actual.name
-                      << "_max_error: " << error << '\n';
+                      << "_max_error: " << error << '\n'
+                      << "higgs_encoder_stage_"
+                      << actual.name
+                      << "_snr_db: "
+                      << signal_to_noise_db(
+                          actual.values,
+                          expected.values)
+                      << '\n';
             if (!std::isfinite(error)) {
                 std::cout << "stage_shape_actual: "
                           << actual.name << ' '
@@ -312,17 +341,27 @@ int main() {
                 worst_stage_error = std::max(
                     worst_stage_error,
                     error);
+                worst_stage_snr_db = std::min(
+                    worst_stage_snr_db,
+                    signal_to_noise_db(
+                        actual.values,
+                        expected.values));
             }
         }
         std::cout << "higgs_encoder_worst_stage_error: "
-                  << worst_stage_error << '\n';
-        const float stage_tolerance =
-            std::string(device_name) == "CPU" ? 5e-3f : 1e-2f;
+                  << worst_stage_error << '\n'
+                  << "higgs_encoder_worst_stage_snr_db: "
+                  << worst_stage_snr_db << '\n';
+        const bool cuda_device =
+            std::string(device_name) != "CPU";
+        const bool precision_ok = cuda_device
+            ? worst_stage_snr_db >= 50.0
+            : worst_stage_error <= 5e-3f;
 
         ggml_backend_free(backend);
         if (!codes_match ||
             !std::isfinite(worst_stage_error) ||
-            worst_stage_error > stage_tolerance) {
+            !precision_ok) {
             return 1;
         }
         return 0;
