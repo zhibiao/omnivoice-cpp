@@ -141,12 +141,47 @@ int main() {
         status = omnivoice::load_audio_24k_mono(
             stereo_path.u8string(),
             converted);
+        const int32_t converted_crossings = status
+            ? count_zero_crossings(converted.samples)
+            : -1;
         const bool converted_valid =
             status &&
             converted.sample_rate == 24000 &&
             converted.channels == 1 &&
             converted.samples.size() >= 2390 &&
-            converted.samples.size() <= 2410;
+            converted.samples.size() <= 2410 &&
+            std::abs(converted_crossings - 88) <= 4;
+
+        // Asymmetric stereo (L=0.4, R=0) proves channels are really mixed.
+        omnivoice::AudioBuffer asymmetric;
+        asymmetric.sample_rate = 44100;
+        asymmetric.channels = 2;
+        for (int32_t frame = 0; frame < 480; ++frame) {
+            asymmetric.samples.push_back(0.4f);
+            asymmetric.samples.push_back(0.0f);
+        }
+        const std::filesystem::path asymmetric_path =
+            std::filesystem::temp_directory_path() /
+            "omnivoice_decode_asymmetric.wav";
+        temporaries.push_back(asymmetric_path);
+        status = omnivoice::write_wav(
+            asymmetric_path.u8string(),
+            asymmetric);
+        omnivoice::AudioBuffer mixed;
+        if (status) {
+            status = omnivoice::load_audio_24k_mono(
+                asymmetric_path.u8string(),
+                mixed);
+        }
+        const float dc_mix = status && !mixed.samples.empty()
+            ? mixed.samples[mixed.samples.size() / 2]
+            : -1.0f;
+        const bool downmix_valid =
+            status &&
+            mixed.sample_rate == 24000 &&
+            mixed.channels == 1 &&
+            dc_mix > 0.0f &&
+            dc_mix < 0.39f;
 
         // Missing files are rejected.
         omnivoice::AudioBuffer missing;
@@ -170,12 +205,17 @@ int main() {
                   << (converted_valid ? "true" : "false") << '\n'
                   << "decode_wav_converted_samples: "
                   << converted.samples.size() << '\n'
+                  << "decode_wav_converted_zero_crossings: "
+                  << converted_crossings << '\n'
+                  << "decode_wav_downmix_valid: "
+                  << (downmix_valid ? "true" : "false") << '\n'
+                  << "decode_wav_downmix_value: " << dc_mix << '\n'
                   << "decode_missing_rejected: "
                   << (missing_rejected ? "true" : "false") << '\n';
 
         cleanup();
         if (!mp3_valid || !unsupported_rejected || !wav_valid ||
-            !converted_valid || !missing_rejected) {
+            !converted_valid || !downmix_valid || !missing_rejected) {
             return 1;
         }
         return 0;
