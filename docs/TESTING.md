@@ -11,13 +11,17 @@
 `models/`、`testdata/` 和 WAV 文件默认被 `.gitignore` 忽略，因此普通 CI 只运行
 `portable` 测试。完整测试必须显式准备模型和 golden 数据。
 
+`ctest` 预设不会自动构建测试：先运行对应的 `*-tests` 构建预设（例如
+`cmake --build --preset windows-cuda-tests`），再执行 `ctest`。日常的
+`windows-cpu` / `windows-cuda` 等构建预设只编译 `omnivoice-cli`。
+
 ## 便携测试
 
 Windows：
 
 ```powershell
 cmake --preset windows-cpu
-cmake --build --preset windows-cpu
+cmake --build --preset windows-cpu-tests
 ctest --preset windows-cpu-portable
 ```
 
@@ -25,7 +29,7 @@ Linux：
 
 ```bash
 cmake --preset linux-cpu
-cmake --build --preset linux-cpu
+cmake --build --preset linux-cpu-tests
 ctest --preset linux-cpu-portable
 ```
 
@@ -52,15 +56,17 @@ models/omnivoice-tokenizer-f32.gguf
 python tests/tools/generate_qwen3_block_fixture.py --output testdata/qwen3_block_fixture.bin
 ```
 
-执行全部 CPU 资产测试。Windows：
+先构建测试目标。Windows：
 
 ```powershell
+cmake --build --preset windows-cpu-tests
 ctest --test-dir build/windows-cpu -C Release -L requires-assets --output-on-failure
 ```
 
 Linux：
 
 ```bash
+cmake --build --preset linux-cpu-tests
 ctest --test-dir build/linux-cpu -L requires-assets --output-on-failure
 ```
 
@@ -70,11 +76,13 @@ CUDA 测试需要真实 GPU，GitHub 托管 runner 默认没有可用 GPU，因�
 runner 或本地验证：
 
 ```powershell
-ctest --preset windows-cuda-assets
+cmake --build --preset windows-cuda-tests
+ctest --test-dir build/windows-cuda -C Release -L requires-assets --output-on-failure
 ```
 
 ```bash
-ctest --preset linux-cuda-assets
+cmake --build --preset linux-cuda-tests
+ctest --test-dir build/linux-cuda -L requires-assets --output-on-failure
 ```
 
 CUDA 测试通过 `OMNIVOICE_TEST_DEVICE=CUDA0` 选择设备。设备不存在或资产缺失时，

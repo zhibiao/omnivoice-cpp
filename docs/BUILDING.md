@@ -16,6 +16,12 @@ Linux x86_64；CUDA 是可选后端，需要额外的 NVIDIA 工具链和显卡�
 - 支持 C++17 的 C++ 编译器。
 - CUDA 构建需要 CUDA Toolkit 和匹配的 NVIDIA 驱动。
 
+构建预设分为两类：
+
+- `windows-cpu`、`windows-cuda`、`windows-cuda-portable`（以及对应的 `linux-*`）
+  只构建 `omnivoice-cli`，用于日常开发和发布。
+- `*-tests` 构建全部测试目标。`ctest` 预设默认假设测试已经构建。
+
 ## Windows
 
 安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载。
@@ -24,7 +30,8 @@ CPU 构建：
 
 ```powershell
 cmake --preset windows-cpu
-cmake --build --preset windows-cpu
+cmake --build --preset windows-cpu          # 只构建 CLI
+cmake --build --preset windows-cpu-tests    # 需要测试时再构建测试目标
 ctest --preset windows-cpu-portable
 ```
 
@@ -40,7 +47,8 @@ CUDA 构建：
 $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.5"
 
 cmake --preset windows-cuda
-cmake --build --preset windows-cuda
+cmake --build --preset windows-cuda          # 只构建 CLI
+cmake --build --preset windows-cuda-tests    # 需要测试时再构建测试目标
 ```
 
 运行 CUDA 程序前也需要保证 CUDA 运行库目录位于 `PATH` 中。
@@ -57,7 +65,8 @@ CPU 构建：
 
 ```bash
 cmake --preset linux-cpu
-cmake --build --preset linux-cpu
+cmake --build --preset linux-cpu          # 只构建 CLI
+cmake --build --preset linux-cpu-tests    # 需要测试时再构建测试目标
 ctest --preset linux-cpu-portable
 ```
 
@@ -72,7 +81,8 @@ CUDA 构建：
 ```bash
 cmake --preset linux-cuda \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
-cmake --build --preset linux-cuda
+cmake --build --preset linux-cuda          # 只构建 CLI
+cmake --build --preset linux-cuda-tests    # 需要测试时再构建测试目标
 ```
 
 如果 `nvcc` 已在 `PATH` 中，也可以只设置 `CUDACXX`：

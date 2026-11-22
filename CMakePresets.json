@@ -91,10 +91,24 @@
       "name": "windows-cpu",
       "configurePreset": "windows-cpu",
       "configuration": "Release",
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
+    },
+    {
+      "name": "windows-cpu-tests",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release",
       "jobs": 0
     },
     {
       "name": "windows-cuda",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
+    },
+    {
+      "name": "windows-cuda-tests",
       "configurePreset": "windows-cuda",
       "configuration": "Release",
       "jobs": 0
@@ -103,22 +117,36 @@
       "name": "windows-cuda-portable",
       "configurePreset": "windows-cuda-portable",
       "configuration": "Release",
-      "jobs": 0
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
     },
     {
       "name": "linux-cpu",
+      "configurePreset": "linux-cpu",
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
+    },
+    {
+      "name": "linux-cpu-tests",
       "configurePreset": "linux-cpu",
       "jobs": 0
     },
     {
       "name": "linux-cuda",
       "configurePreset": "linux-cuda",
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
+    },
+    {
+      "name": "linux-cuda-tests",
+      "configurePreset": "linux-cuda",
       "jobs": 0
     },
     {
       "name": "linux-cuda-portable",
       "configurePreset": "linux-cuda-portable",
-      "jobs": 0
+      "jobs": 0,
+      "targets": ["omnivoice-cli"]
     }
   ],
   "testPresets": [
@@ -136,32 +164,6 @@
       }
     },
     {
-      "name": "windows-cuda-assets",
-      "configurePreset": "windows-cuda",
-      "configuration": "Release",
-      "output": {
-        "outputOnFailure": true
-      },
-      "filter": {
-        "include": {
-          "label": "requires-assets"
-        }
-      }
-    },
-    {
-      "name": "windows-cuda-portable-assets",
-      "configurePreset": "windows-cuda-portable",
-      "configuration": "Release",
-      "output": {
-        "outputOnFailure": true
-      },
-      "filter": {
-        "include": {
-          "label": "requires-assets"
-        }
-      }
-    },
-    {
       "name": "linux-cpu-portable",
       "configurePreset": "linux-cpu",
       "output": {
@@ -170,30 +172,6 @@
       "filter": {
         "include": {
           "label": "portable"
-        }
-      }
-    },
-    {
-      "name": "linux-cuda-assets",
-      "configurePreset": "linux-cuda",
-      "output": {
-        "outputOnFailure": true
-      },
-      "filter": {
-        "include": {
-          "label": "requires-assets"
-        }
-      }
-    },
-    {
-      "name": "linux-cuda-portable-assets",
-      "configurePreset": "linux-cuda-portable",
-      "output": {
-        "outputOnFailure": true
-      },
-      "filter": {
-        "include": {
-          "label": "requires-assets"
         }
       }
     }
