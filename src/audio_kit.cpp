@@ -1,11 +1,19 @@
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
+
+#include "config.h"
+
+#include "miniaudio-0.11.26/miniaudio.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace omnivoice {
@@ -27,18 +35,6 @@ uint32_t read_u32(const std::vector<uint8_t>& data, size_t offset) {
         (static_cast<uint32_t>(data[offset + 1]) << 8) |
         (static_cast<uint32_t>(data[offset + 2]) << 16) |
         (static_cast<uint32_t>(data[offset + 3]) << 24);
-}
-
-void append_u16(std::vector<uint8_t>& output, uint16_t value) {
-    output.push_back(static_cast<uint8_t>(value));
-    output.push_back(static_cast<uint8_t>(value >> 8));
-}
-
-void append_u32(std::vector<uint8_t>& output, uint32_t value) {
-    output.push_back(static_cast<uint8_t>(value));
-    output.push_back(static_cast<uint8_t>(value >> 8));
-    output.push_back(static_cast<uint8_t>(value >> 16));
-    output.push_back(static_cast<uint8_t>(value >> 24));
 }
 
 bool range_is_valid(size_t offset, uint64_t size, size_t total) {
@@ -316,90 +312,6 @@ Status load_wav_24k_mono(
     return Status::ok();
 }
 
-Status save_wav_24k_mono(
-    const std::string& path,
-    const AudioBuffer& audio) {
-    Status status = validate_audio_24k_mono(audio);
-    if (!status) {
-        return status;
-    }
-    return write_wav(path, audio);
-}
-
-Status write_wav(
-    const std::string& path,
-    const AudioBuffer& audio) {
-    if (path.empty()) {
-        return Status::error("WAV output path is empty");
-    }
-    if (audio.samples.empty()) {
-        return Status::error("WAV output has no samples");
-    }
-    if (audio.sample_rate <= 0) {
-        return Status::error("WAV sample rate must be positive");
-    }
-    if (audio.channels <= 0 || audio.channels > 2) {
-        return Status::error("WAV writer supports mono or stereo");
-    }
-    if (audio.samples.size() >
-        (std::numeric_limits<uint32_t>::max() - 36) / 2) {
-        return Status::error("WAV output is too large");
-    }
-
-    const uint16_t channels = static_cast<uint16_t>(audio.channels);
-    const uint32_t data_size =
-        static_cast<uint32_t>(audio.samples.size() * sizeof(int16_t));
-    const uint16_t block_align = static_cast<uint16_t>(channels * 2);
-    const uint32_t byte_rate =
-        static_cast<uint32_t>(audio.sample_rate) * block_align;
-
-    std::vector<uint8_t> header;
-    header.reserve(44);
-    header.insert(header.end(), {'R', 'I', 'F', 'F'});
-    append_u32(header, 36 + data_size);
-    header.insert(header.end(), {'W', 'A', 'V', 'E'});
-    header.insert(header.end(), {'f', 'm', 't', ' '});
-    append_u32(header, 16);
-    append_u16(header, 1);
-    append_u16(header, channels);
-    append_u32(header, static_cast<uint32_t>(audio.sample_rate));
-    append_u32(header, byte_rate);
-    append_u16(header, block_align);
-    append_u16(header, 16);
-    header.insert(header.end(), {'d', 'a', 't', 'a'});
-    append_u32(header, data_size);
-
-    std::ofstream file(
-        std::filesystem::u8path(path),
-        std::ios::binary | std::ios::trunc);
-    if (!file) {
-        return Status::error("failed to open WAV output: " + path);
-    }
-    file.write(
-        reinterpret_cast<const char*>(header.data()),
-        static_cast<std::streamsize>(header.size()));
-
-    for (float sample : audio.samples) {
-        if (!std::isfinite(sample)) {
-            return Status::error("WAV samples contain non-finite values");
-        }
-        sample = std::clamp(sample, -1.0f, 1.0f);
-        const int16_t pcm = sample >= 0.0f
-            ? static_cast<int16_t>(sample * 32767.0f)
-            : static_cast<int16_t>(sample * 32768.0f);
-        const uint16_t raw = static_cast<uint16_t>(pcm);
-        const char bytes[2] = {
-            static_cast<char>(raw),
-            static_cast<char>(raw >> 8),
-        };
-        file.write(bytes, 2);
-    }
-    if (!file) {
-        return Status::error("failed to write WAV output: " + path);
-    }
-    return Status::ok();
-}
-
 float compute_rms(const AudioBuffer& audio) {
     if (audio.samples.empty()) {
         return 0.0f;
@@ -574,6 +486,502 @@ Status remove_silence(
     }
     audio.samples = std::move(trimmed);
     return Status::ok();
+}
+
+namespace {
+
+constexpr size_t MAX_AUDIO_FILE_BYTES = 512ull << 20;
+constexpr ma_uint64 DECODE_CHUNK_FRAMES = 4096;
+
+enum class AudioContainer {
+    Wave,
+    Mp3,
+    Unsupported,
+};
+
+AudioContainer sniff_container(const std::vector<uint8_t>& data) {
+    if (data.size() >= 12 &&
+        std::memcmp(data.data(), "RIFF", 4) == 0 &&
+        std::memcmp(data.data() + 8, "WAVE", 4) == 0) {
+        return AudioContainer::Wave;
+    }
+    if (data.size() >= 3 &&
+        std::memcmp(data.data(), "ID3", 3) == 0) {
+        return AudioContainer::Mp3;
+    }
+    // MPEG audio frame sync with Layer III (AAC ADTS uses layer 00).
+    if (data.size() >= 2 &&
+        data[0] == 0xff &&
+        (data[1] & 0xe0) == 0xe0 &&
+        ((data[1] >> 1) & 0x03) == 0x01) {
+        return AudioContainer::Mp3;
+    }
+    return AudioContainer::Unsupported;
+}
+
+Status read_audio_file(
+    const std::string& path,
+    std::vector<uint8_t>& data) {
+    std::ifstream file(
+        std::filesystem::u8path(path),
+        std::ios::binary | std::ios::ate);
+    if (!file) {
+        return Status::error("failed to open audio file: " + path);
+    }
+    const std::streamoff size = file.tellg();
+    if (size <= 0) {
+        return Status::error("audio file is empty: " + path);
+    }
+    if (static_cast<uint64_t>(size) > MAX_AUDIO_FILE_BYTES) {
+        return Status::error("audio file is too large: " + path);
+    }
+    data.resize(static_cast<size_t>(size));
+    file.seekg(0, std::ios::beg);
+    file.read(
+        reinterpret_cast<char*>(data.data()),
+        static_cast<std::streamsize>(data.size()));
+    if (!file) {
+        return Status::error("failed to read audio file: " + path);
+    }
+    return Status::ok();
+}
+
+Status decode_with_miniaudio(
+    const std::vector<uint8_t>& data,
+    const std::string& path,
+    AudioBuffer& audio) {
+    const ma_decoder_config config = ma_decoder_config_init(
+        ma_format_f32,
+        1,
+        static_cast<ma_uint32>(OMNIVOICE_SAMPLE_RATE));
+    ma_decoder decoder;
+    ma_result result = ma_decoder_init_memory(
+        data.data(),
+        data.size(),
+        &config,
+        &decoder);
+    if (result != MA_SUCCESS) {
+        return Status::error(
+            "failed to decode audio: " + path +
+            " (miniaudio " +
+            std::to_string(static_cast<int>(result)) + ")");
+    }
+
+    std::vector<float> samples;
+    std::vector<float> chunk(
+        static_cast<size_t>(DECODE_CHUNK_FRAMES));
+    for (;;) {
+        ma_uint64 frames_read = 0;
+        result = ma_decoder_read_pcm_frames(
+            &decoder,
+            chunk.data(),
+            DECODE_CHUNK_FRAMES,
+            &frames_read);
+        if (result != MA_SUCCESS && result != MA_AT_END) {
+            ma_decoder_uninit(&decoder);
+            return Status::error(
+                "failed to decode audio: " + path +
+                " (miniaudio " +
+                std::to_string(static_cast<int>(result)) + ")");
+        }
+        if (frames_read > 0) {
+            samples.insert(
+                samples.end(),
+                chunk.begin(),
+                chunk.begin() +
+                    static_cast<std::ptrdiff_t>(frames_read));
+        }
+        if (frames_read == 0 || result == MA_AT_END) {
+            break;
+        }
+    }
+    ma_decoder_uninit(&decoder);
+
+    if (samples.empty()) {
+        return Status::error("audio decoded to no samples: " + path);
+    }
+    audio = {};
+    audio.samples = std::move(samples);
+    audio.sample_rate = OMNIVOICE_SAMPLE_RATE;
+    audio.channels = 1;
+    return validate_audio_24k_mono(audio);
+}
+
+} // namespace
+
+Status load_audio_24k_mono(
+    const std::string& path,
+    AudioBuffer& audio) {
+    audio = {};
+    std::vector<uint8_t> data;
+    Status status = read_audio_file(path, data);
+    if (!status) {
+        return status;
+    }
+
+    switch (sniff_container(data)) {
+    case AudioContainer::Wave: {
+        // Keep the strict 24 kHz mono contract for WAV files, and fall back
+        // to decoding when the stream needs resampling or downmixing.
+        const Status strict = load_wav_24k_mono(path, audio);
+        if (strict) {
+            return strict;
+        }
+        const Status decoded = decode_with_miniaudio(data, path, audio);
+        return decoded ? decoded : strict;
+    }
+    case AudioContainer::Mp3:
+        return decode_with_miniaudio(data, path, audio);
+    case AudioContainer::Unsupported:
+        break;
+    }
+    return Status::error(
+        "unsupported audio format (expected WAV or MP3): " + path);
+}
+
+namespace {
+
+void append_u16(std::vector<uint8_t>& output, uint16_t value) {
+    output.push_back(static_cast<uint8_t>(value));
+    output.push_back(static_cast<uint8_t>(value >> 8));
+}
+
+void append_u32(std::vector<uint8_t>& output, uint32_t value) {
+    output.push_back(static_cast<uint8_t>(value));
+    output.push_back(static_cast<uint8_t>(value >> 8));
+    output.push_back(static_cast<uint8_t>(value >> 16));
+    output.push_back(static_cast<uint8_t>(value >> 24));
+}
+
+} // namespace
+
+Status save_wav_24k_mono(
+    const std::string& path,
+    const AudioBuffer& audio) {
+    Status status = validate_audio_24k_mono(audio);
+    if (!status) {
+        return status;
+    }
+    return write_wav(path, audio);
+}
+
+Status write_wav(
+    const std::string& path,
+    const AudioBuffer& audio) {
+    if (path.empty()) {
+        return Status::error("WAV output path is empty");
+    }
+    if (audio.samples.empty()) {
+        return Status::error("WAV output has no samples");
+    }
+    if (audio.sample_rate <= 0) {
+        return Status::error("WAV sample rate must be positive");
+    }
+    if (audio.channels <= 0 || audio.channels > 2) {
+        return Status::error("WAV writer supports mono or stereo");
+    }
+    if (audio.samples.size() >
+        (std::numeric_limits<uint32_t>::max() - 36) / 2) {
+        return Status::error("WAV output is too large");
+    }
+
+    const uint16_t channels = static_cast<uint16_t>(audio.channels);
+    const uint32_t data_size =
+        static_cast<uint32_t>(audio.samples.size() * sizeof(int16_t));
+    const uint16_t block_align = static_cast<uint16_t>(channels * 2);
+    const uint32_t byte_rate =
+        static_cast<uint32_t>(audio.sample_rate) * block_align;
+
+    std::vector<uint8_t> header;
+    header.reserve(44);
+    header.insert(header.end(), {'R', 'I', 'F', 'F'});
+    append_u32(header, 36 + data_size);
+    header.insert(header.end(), {'W', 'A', 'V', 'E'});
+    header.insert(header.end(), {'f', 'm', 't', ' '});
+    append_u32(header, 16);
+    append_u16(header, 1);
+    append_u16(header, channels);
+    append_u32(header, static_cast<uint32_t>(audio.sample_rate));
+    append_u32(header, byte_rate);
+    append_u16(header, block_align);
+    append_u16(header, 16);
+    header.insert(header.end(), {'d', 'a', 't', 'a'});
+    append_u32(header, data_size);
+
+    std::ofstream file(
+        std::filesystem::u8path(path),
+        std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return Status::error("failed to open WAV output: " + path);
+    }
+    file.write(
+        reinterpret_cast<const char*>(header.data()),
+        static_cast<std::streamsize>(header.size()));
+
+    for (float sample : audio.samples) {
+        if (!std::isfinite(sample)) {
+            return Status::error("WAV samples contain non-finite values");
+        }
+        sample = std::clamp(sample, -1.0f, 1.0f);
+        const int16_t pcm = sample >= 0.0f
+            ? static_cast<int16_t>(sample * 32767.0f)
+            : static_cast<int16_t>(sample * 32768.0f);
+        const uint16_t raw = static_cast<uint16_t>(pcm);
+        const char bytes[2] = {
+            static_cast<char>(raw),
+            static_cast<char>(raw >> 8),
+        };
+        file.write(bytes, 2);
+    }
+    if (!file) {
+        return Status::error("failed to write WAV output: " + path);
+    }
+    return Status::ok();
+}
+
+Status cross_fade_audio_chunks(
+    const std::vector<AudioBuffer>& chunks,
+    int32_t sample_rate,
+    float silence_duration,
+    AudioBuffer& output) {
+    output = {};
+    if (chunks.empty() || sample_rate != 24000) {
+        return Status::error("invalid audio chunk list");
+    }
+    for (const AudioBuffer& chunk : chunks) {
+        if (chunk.sample_rate != sample_rate ||
+            chunk.channels != 1 ||
+            chunk.samples.empty()) {
+            return Status::error("audio chunks must be non-empty 24 kHz mono");
+        }
+    }
+    if (chunks.size() == 1) {
+        output = chunks[0];
+        return Status::ok();
+    }
+
+    const int32_t total_fade_samples = std::max(
+        0,
+        static_cast<int32_t>(silence_duration * sample_rate));
+    const int32_t fade_samples = total_fade_samples / 3;
+    const int32_t silence_samples = fade_samples;
+    output = chunks[0];
+    for (size_t chunk_index = 1;
+         chunk_index < chunks.size();
+         ++chunk_index) {
+        const int32_t fade_out = std::min(
+            fade_samples,
+            static_cast<int32_t>(output.samples.size()));
+        for (int32_t index = 0; index < fade_out; ++index) {
+            const float weight =
+                1.0f - static_cast<float>(index) /
+                    static_cast<float>(std::max(1, fade_out - 1));
+            const size_t destination =
+                output.samples.size() -
+                static_cast<size_t>(fade_out) +
+                static_cast<size_t>(index);
+            output.samples[destination] *= weight;
+        }
+
+        AudioBuffer faded_in = chunks[chunk_index];
+        const int32_t fade_in = std::min(
+            fade_samples,
+            static_cast<int32_t>(faded_in.samples.size()));
+        for (int32_t index = 0; index < fade_in; ++index) {
+            const float weight =
+                static_cast<float>(index) /
+                static_cast<float>(std::max(1, fade_in - 1));
+            faded_in.samples[static_cast<size_t>(index)] *= weight;
+        }
+
+        output.samples.resize(
+            output.samples.size() +
+            static_cast<size_t>(silence_samples) +
+            faded_in.samples.size(),
+            0.0f);
+        const size_t destination =
+            output.samples.size() -
+            faded_in.samples.size();
+        std::copy(
+            faded_in.samples.begin(),
+            faded_in.samples.end(),
+            output.samples.begin() +
+                static_cast<std::ptrdiff_t>(destination));
+    }
+    return Status::ok();
+}
+
+Status postprocess_generated_audio(
+    const VoiceCloneConfig& config,
+    float reference_rms,
+    AudioBuffer& audio) {
+    if (config.postprocess_output) {
+        for (float& sample : audio.samples) {
+            sample = std::clamp(sample, -1.0f, 1.0f);
+        }
+        SilenceTrimOptions trim;
+        trim.threshold_dbfs = -50.0f;
+        trim.min_silence_ms = 500;
+        trim.keep_silence_ms = 100;
+        Status status = remove_silence(audio, trim);
+        if (!status) {
+            return status;
+        }
+    }
+    if (reference_rms < 0.1f) {
+        const float gain = reference_rms / 0.1f;
+        for (float& sample : audio.samples) {
+            sample *= gain;
+        }
+    }
+
+    const int32_t fade_samples = std::max(
+        0,
+        static_cast<int32_t>(
+            config.fade_duration * audio.sample_rate));
+    const int32_t fade = std::min(
+        fade_samples,
+        static_cast<int32_t>(audio.samples.size() / 2));
+    for (int32_t index = 0; index < fade; ++index) {
+        const float position =
+            static_cast<float>(index) /
+            static_cast<float>(std::max(1, fade - 1));
+        audio.samples[static_cast<size_t>(index)] *= position;
+        audio.samples[
+            audio.samples.size() - 1 -
+            static_cast<size_t>(index)] *= position;
+    }
+
+    const int32_t padding = std::max(
+        0,
+        static_cast<int32_t>(
+            config.pad_duration * audio.sample_rate));
+    if (padding > 0) {
+        std::vector<float> padded(
+            audio.samples.size() +
+                2 * static_cast<size_t>(padding),
+            0.0f);
+        std::copy(
+            audio.samples.begin(),
+            audio.samples.end(),
+            padded.begin() + padding);
+        audio.samples = std::move(padded);
+    }
+    return Status::ok();
+}
+
+namespace {
+
+constexpr int32_t ORIGINAL_RATE = 24000;
+constexpr int32_t TARGET_RATE = 16000;
+constexpr int32_t GCD = 8000;
+constexpr int32_t REDUCED_ORIGINAL = ORIGINAL_RATE / GCD;
+constexpr int32_t REDUCED_TARGET = TARGET_RATE / GCD;
+constexpr int32_t LOWPASS_FILTER_WIDTH = 6;
+constexpr double ROLLOFF = 0.99;
+
+struct ResampleKernel {
+    int32_t width = 0;
+    std::vector<float> values;  // [REDUCED_TARGET, 2*width+reduced_original]
+};
+
+ResampleKernel make_kernel() {
+    const double base_freq =
+        static_cast<double>(
+            std::min(REDUCED_ORIGINAL, REDUCED_TARGET)) *
+        ROLLOFF;
+    const int32_t width = static_cast<int32_t>(std::ceil(
+        static_cast<double>(LOWPASS_FILTER_WIDTH) *
+        static_cast<double>(REDUCED_ORIGINAL) / base_freq));
+    const int32_t kernel_size =
+        2 * width + REDUCED_ORIGINAL;
+    const double scale =
+        base_freq / static_cast<double>(REDUCED_ORIGINAL);
+
+    ResampleKernel kernel;
+    kernel.width = width;
+    kernel.values.resize(
+        static_cast<size_t>(REDUCED_TARGET) *
+        static_cast<size_t>(kernel_size));
+    constexpr double PI = 3.14159265358979323846264338327950288;
+
+    for (int32_t phase = 0; phase < REDUCED_TARGET; ++phase) {
+        for (int32_t index = 0; index < kernel_size; ++index) {
+            double t =
+                static_cast<double>(-phase) /
+                    static_cast<double>(REDUCED_TARGET) +
+                static_cast<double>(index - width) /
+                    static_cast<double>(REDUCED_ORIGINAL);
+            t *= base_freq;
+            t = std::clamp(
+                t,
+                -static_cast<double>(LOWPASS_FILTER_WIDTH),
+                static_cast<double>(LOWPASS_FILTER_WIDTH));
+            const double window = std::pow(
+                std::cos(
+                    t * PI /
+                    static_cast<double>(LOWPASS_FILTER_WIDTH) /
+                    2.0),
+                2.0);
+            t *= PI;
+            const double sinc =
+                std::abs(t) < 1e-20 ? 1.0 : std::sin(t) / t;
+            kernel.values[
+                static_cast<size_t>(phase) *
+                    static_cast<size_t>(kernel_size) +
+                static_cast<size_t>(index)] =
+                static_cast<float>(sinc * window * scale);
+        }
+    }
+    return kernel;
+}
+
+} // namespace
+
+std::vector<float> resample_24k_to_16k(
+    const std::vector<float>& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const ResampleKernel kernel = make_kernel();
+    const int64_t input_length =
+        static_cast<int64_t>(input.size());
+    const int64_t output_length = static_cast<int64_t>(std::ceil(
+        static_cast<double>(REDUCED_TARGET) *
+        static_cast<double>(input_length) /
+        static_cast<double>(REDUCED_ORIGINAL)));
+    const int64_t kernel_size =
+        static_cast<int64_t>(kernel.values.size()) /
+        REDUCED_TARGET;
+
+    std::vector<float> output(static_cast<size_t>(output_length));
+    for (int64_t output_index = 0;
+         output_index < output_length;
+         ++output_index) {
+        const int64_t convolution_index =
+            output_index / REDUCED_TARGET;
+        const int32_t phase = static_cast<int32_t>(
+            output_index % REDUCED_TARGET);
+        const float* filter =
+            kernel.values.data() +
+            static_cast<ptrdiff_t>(phase) * kernel_size;
+
+        float sum = 0.0f;
+        for (int64_t tap = 0; tap < kernel_size; ++tap) {
+            const int64_t source_index =
+                convolution_index * REDUCED_ORIGINAL +
+                tap - kernel.width;
+            if (source_index >= 0 &&
+                source_index < input_length) {
+                sum +=
+                    input[static_cast<size_t>(source_index)] *
+                    filter[static_cast<size_t>(tap)];
+            }
+        }
+        output[static_cast<size_t>(output_index)] = sum;
+    }
+    return output;
 }
 
 } // namespace omnivoice

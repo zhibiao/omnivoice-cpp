@@ -41,10 +41,11 @@ function(omnivoice_add_cuda_test test_name target)
 endfunction()
 
 omnivoice_add_test(test_types omnivoice_types)
-omnivoice_add_test(test_wav_writer omnivoice_wav_writer)
-omnivoice_add_test(test_audio_io omnivoice_audio_io)
+omnivoice_add_test(test_audio_writer omnivoice_audio_writer)
+omnivoice_add_test(test_audio_loader omnivoice_audio_loader)
 omnivoice_add_test(test_audio_postprocess omnivoice_audio_postprocess)
 omnivoice_add_test(test_audio_resampler omnivoice_audio_resampler)
+omnivoice_add_test(test_audio_decode omnivoice_audio_decode)
 omnivoice_add_test(test_config omnivoice_config)
 omnivoice_add_test(test_gguf_model omnivoice_gguf_model)
 omnivoice_add_test(test_prompt_builder omnivoice_prompt_builder)
@@ -140,9 +141,10 @@ omnivoice_add_test(
 )
 set_tests_properties(
     omnivoice_types
-    omnivoice_wav_writer
-    omnivoice_audio_io
+    omnivoice_audio_writer
+    omnivoice_audio_loader
     omnivoice_audio_resampler
+    omnivoice_audio_decode
     omnivoice_gguf_model
     omnivoice_voice_clone_prompt
     PROPERTIES

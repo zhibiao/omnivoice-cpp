@@ -1,4 +1,4 @@
-#include "audio_kit/audio_resampler.h"
+#include "audio_kit.h"
 
 #include <algorithm>
 #include <cmath>

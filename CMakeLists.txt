@@ -77,9 +77,7 @@ function(omnivoice_configure_target target)
 endfunction()
 
 add_library(omnivoice-core STATIC
-    src/audio_kit/audio_io.cpp
-    src/audio_kit/audio_postprocess.cpp
-    src/audio_kit/audio_resampler.cpp
+    src/audio_kit.cpp
     src/config.cpp
     src/diffusion_decoder/diffusion_decoder.cpp
     src/diffusion_decoder/mask_schedule.cpp
@@ -96,6 +94,7 @@ add_library(omnivoice-core STATIC
     src/text_tokenizer/text_chunker.cpp
     src/text_tokenizer/text_tokenizer.cpp
     src/voice_clone_prompt.cpp
+    vendor/miniaudio-0.11.26/miniaudio.c
 )
 omnivoice_configure_target(omnivoice-core)
 target_include_directories(omnivoice-core PUBLIC

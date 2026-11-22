@@ -1,4 +1,4 @@
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
 
 #include <algorithm>
 #include <cmath>

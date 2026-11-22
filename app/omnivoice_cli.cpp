@@ -1,4 +1,4 @@
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
 #include "omnivoice.h"
 #include "voice_clone_prompt.h"
 
@@ -300,14 +300,14 @@ void print_usage() {
         << "  omnivoice-cli --list-devices\n"
         << "  omnivoice-cli --audio-info FILE.wav\n"
         << "  omnivoice-cli --create-prompt --model LM.gguf "
-           "--audio-tokenizer AUDIO.gguf --ref-audio REF.wav "
+           "--audio-tokenizer AUDIO.gguf --ref-audio REF.wav|REF.mp3 "
            "--ref-text TEXT_OR_FILE.txt --prompt-output FILE.ovprompt "
            "[--device CPU|CUDA0] [--no-preprocess] "
            "[--denoise [true|false]] [--no-denoise]\n"
         << "  omnivoice-cli --clone --model LM.gguf "
            "--audio-tokenizer AUDIO.gguf "
            "(--prompt-input FILE.ovprompt | "
-           "--ref-audio REF.wav --ref-text TEXT_OR_FILE.txt) "
+           "--ref-audio REF.wav|REF.mp3 --ref-text TEXT_OR_FILE.txt) "
            "--text TEXT [--output OUT.wav] [--language LANG] "
            "[--device CPU|CUDA0] [--speed F] [--duration SECONDS] "
            "[--num-step N] [--seed N] "
@@ -315,7 +315,8 @@ void print_usage() {
            "[--prompt-output FILE.ovprompt]\n"
         << "  omnivoice-cli --write-test-tone OUTPUT.wav\n"
         << "  omnivoice-cli --help\n\n"
-        << "Only Voice Clone is implemented. Input WAV must be 24 kHz mono.\n"
+        << "Only Voice Clone is implemented. Reference audio must be "
+           "24 kHz mono WAV or MP3.\n"
         << "The runtime consumes GGUF models only and does not require "
            "Python.\n";
 }
@@ -440,7 +441,7 @@ int create_prompt_command(const Arguments& args) {
     log("reading reference WAV: " + args.reference_audio);
     const auto audio_start = Clock::now();
     omnivoice::AudioBuffer audio;
-    status = omnivoice::load_wav_24k_mono(
+    status = omnivoice::load_audio_24k_mono(
         args.reference_audio,
         audio);
     if (!status) {
@@ -542,7 +543,7 @@ int clone_command(const Arguments& args) {
         log("reading reference WAV: " + args.reference_audio);
         const auto audio_start = Clock::now();
         omnivoice::AudioBuffer reference_audio;
-        status = omnivoice::load_wav_24k_mono(
+        status = omnivoice::load_audio_24k_mono(
             args.reference_audio,
             reference_audio);
         if (!status) {

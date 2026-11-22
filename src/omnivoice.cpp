@@ -1,7 +1,6 @@
 #include "omnivoice.h"
 
-#include "audio_kit/audio_postprocess.h"
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
 #include "duration_estimator.h"
 #include "gguf_model.h"
 #include "text_tokenizer/text_chunker.h"

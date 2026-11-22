@@ -1,4 +1,4 @@
-#include "audio_kit/audio_postprocess.h"
+#include "audio_kit.h"
 
 #include "config.h"
 

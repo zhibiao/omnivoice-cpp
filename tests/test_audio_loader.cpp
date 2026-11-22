@@ -1,4 +1,4 @@
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -124,7 +124,7 @@ int main() {
     };
 
     const auto pcm16_path = write_test_wav(
-        "omnivoice_audio_io_pcm16.wav",
+        "omnivoice_audio_loader_pcm16.wav",
         1,
         16,
         24000,
@@ -154,7 +154,7 @@ int main() {
     }
 
     const auto pcm24_path = write_test_wav(
-        "omnivoice_audio_io_pcm24.wav",
+        "omnivoice_audio_loader_pcm24.wav",
         1,
         24,
         24000,
@@ -173,7 +173,7 @@ int main() {
     }
 
     const auto pcm32_path = write_test_wav(
-        "omnivoice_audio_io_pcm32.wav",
+        "omnivoice_audio_loader_pcm32.wav",
         1,
         32,
         24000,
@@ -192,7 +192,7 @@ int main() {
     }
 
     const auto float_path = write_test_wav(
-        "omnivoice_audio_io_float.wav",
+        "omnivoice_audio_loader_float.wav",
         3,
         32,
         24000,
@@ -211,7 +211,7 @@ int main() {
     }
 
     const auto wrong_rate_path = write_test_wav(
-        "omnivoice_audio_io_48k.wav",
+        "omnivoice_audio_loader_48k.wav",
         1,
         16,
         48000,
@@ -225,7 +225,7 @@ int main() {
     }
 
     const auto stereo_path = write_test_wav(
-        "omnivoice_audio_io_stereo.wav",
+        "omnivoice_audio_loader_stereo.wav",
         1,
         16,
         24000,

@@ -1,7 +1,7 @@
 #include "higgs_tokenizer/encoder.h"
 
 #include "gguf_model.h"
-#include "audio_kit/audio_resampler.h"
+#include "audio_kit.h"
 
 #include "ggml.h"
 

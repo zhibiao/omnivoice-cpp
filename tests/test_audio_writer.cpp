@@ -1,6 +1,6 @@
 #include "status.h"
 #include "types.h"
-#include "audio_kit/audio_io.h"
+#include "audio_kit.h"
 
 #include <array>
 #include <cstdint>
@@ -23,7 +23,7 @@ uint32_t read_u32(const std::array<char, 44>& header, size_t offset) {
 int main() {
     const std::filesystem::path output =
         std::filesystem::temp_directory_path() /
-        "omnivoice_m0_wav_writer_test.wav";
+        "omnivoice_audio_writer_test.wav";
 
     omnivoice::AudioBuffer audio;
     audio.sample_rate = 24000;

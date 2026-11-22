@@ -9,6 +9,8 @@
 
 namespace omnivoice {
 
+struct VoiceCloneConfig;
+
 constexpr int32_t OMNIVOICE_SAMPLE_RATE = 24000;
 constexpr int32_t OMNIVOICE_HOP_LENGTH = 960;
 
@@ -26,13 +28,24 @@ struct SilenceTrimOptions {
     int32_t keep_silence_ms = 100;
 };
 
-// M2 only accepts 24 kHz, mono WAV files. PCM16, PCM24, PCM32 and IEEE
+// Strict reader for 24 kHz mono WAV files. PCM16, PCM24, PCM32 and IEEE
 // float32 sample encodings are supported.
 Status load_wav_24k_mono(
     const std::string& path,
     AudioBuffer& audio,
     WavInfo* info = nullptr);
 
+// Loads reference audio as 24 kHz mono float32.
+//
+// RIFF/WAVE and MP3 containers are supported. Anything else is rejected.
+// WAV files that already satisfy the strict 24 kHz mono contract are read
+// by the dedicated parser; other sample rates, channel counts and MP3
+// streams are decoded and converted to 24 kHz mono.
+Status load_audio_24k_mono(
+    const std::string& path,
+    AudioBuffer& audio);
+
+// Writes a validated 24 kHz mono buffer as 16-bit PCM WAV.
 Status save_wav_24k_mono(
     const std::string& path,
     const AudioBuffer& audio);
@@ -59,5 +72,21 @@ Status pad_to_hop_multiple(
 Status remove_silence(
     AudioBuffer& audio,
     const SilenceTrimOptions& options = {});
+
+Status cross_fade_audio_chunks(
+    const std::vector<AudioBuffer>& chunks,
+    int32_t sample_rate,
+    float silence_duration,
+    AudioBuffer& output);
+
+Status postprocess_generated_audio(
+    const VoiceCloneConfig& config,
+    float reference_rms,
+    AudioBuffer& audio);
+
+// Matches torchaudio.functional.resample with sinc_interp_hann,
+// lowpass_filter_width=6 and rolloff=0.99.
+std::vector<float> resample_24k_to_16k(
+    const std::vector<float>& input);
 
 } // namespace omnivoice
