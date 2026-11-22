@@ -44,7 +44,9 @@ omnivoice_add_test(test_types omnivoice_types)
 omnivoice_add_test(test_wav_writer omnivoice_wav_writer)
 omnivoice_add_test(test_audio_io omnivoice_audio_io)
 omnivoice_add_test(test_audio_postprocess omnivoice_audio_postprocess)
+omnivoice_add_test(test_audio_resampler omnivoice_audio_resampler)
 omnivoice_add_test(test_config omnivoice_config)
+omnivoice_add_test(test_gguf_model omnivoice_gguf_model)
 omnivoice_add_test(test_prompt_builder omnivoice_prompt_builder)
 omnivoice_add_test(test_duration_estimator omnivoice_duration_estimator)
 omnivoice_add_test(test_qwen3_block omnivoice_qwen3_block)
@@ -67,7 +69,6 @@ set_tests_properties(omnivoice_lm PROPERTIES
 omnivoice_add_test(test_mask_schedule omnivoice_mask_schedule)
 omnivoice_add_test(test_token_selector omnivoice_token_selector)
 
-omnivoice_add_test(test_diffusion_decoder omnivoice_diffusion_decoder)
 omnivoice_add_test(test_merged_diffusion omnivoice_merged_diffusion)
 target_compile_definitions(test_merged_diffusion PRIVATE
     OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
@@ -80,6 +81,21 @@ if(OMNIVOICE_ENABLE_CUDA)
     omnivoice_add_cuda_test(
         omnivoice_merged_diffusion_cuda
         test_merged_diffusion
+    )
+endif()
+
+omnivoice_add_test(test_diffusion_decoder omnivoice_diffusion_decoder)
+target_compile_definitions(test_diffusion_decoder PRIVATE
+    OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
+)
+set_tests_properties(omnivoice_diffusion_decoder PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 120
+)
+if(OMNIVOICE_ENABLE_CUDA)
+    omnivoice_add_cuda_test(
+        omnivoice_diffusion_decoder_cuda
+        test_diffusion_decoder
     )
 endif()
 
@@ -126,24 +142,26 @@ set_tests_properties(
     omnivoice_types
     omnivoice_wav_writer
     omnivoice_audio_io
+    omnivoice_audio_resampler
+    omnivoice_gguf_model
     omnivoice_voice_clone_prompt
     PROPERTIES
     LABELS "portable"
 )
 
-omnivoice_add_test(test_omnivoice_context omnivoice_context)
-target_compile_definitions(test_omnivoice_context PRIVATE
+omnivoice_add_test(test_ggml_runtime omnivoice_ggml_runtime)
+target_compile_definitions(test_ggml_runtime PRIVATE
     OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
     OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
-set_tests_properties(omnivoice_context PROPERTIES
+set_tests_properties(omnivoice_ggml_runtime PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 120
 )
 if(OMNIVOICE_ENABLE_CUDA)
     omnivoice_add_cuda_test(
-        omnivoice_context_cuda
-        test_omnivoice_context
+        omnivoice_ggml_runtime_cuda
+        test_ggml_runtime
     )
 endif()
 
@@ -281,4 +299,14 @@ set_tests_properties(
     omnivoice_cli_prompt_requires_args
     PROPERTIES
     LABELS "portable;cli"
+)
+
+omnivoice_add_test(test_cli_tone omnivoice_cli_tone)
+target_compile_definitions(test_cli_tone PRIVATE
+    OMNIVOICE_CLI_PATH="$<TARGET_FILE:omnivoice-cli>"
+)
+add_dependencies(test_cli_tone omnivoice-cli)
+set_tests_properties(omnivoice_cli_tone PROPERTIES
+    LABELS "portable;cli"
+    TIMEOUT 60
 )

@@ -1,6 +1,6 @@
 #include "diffusion_decoder/token_selector.h"
 
-#include "backend_scheduler.h"
+#include "ggml.h"
 
 #include <algorithm>
 #include <cmath>

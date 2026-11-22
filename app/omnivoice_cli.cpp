@@ -1,12 +1,12 @@
-#include "audio_io.h"
+#include "audio_kit/audio_io.h"
 #include "omnivoice.h"
 #include "voice_clone_prompt.h"
-#include "wav_writer.h"
 
 #include "ggml-backend.h"
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -66,6 +66,7 @@ struct Arguments {
     float speed = 1.0f;
     std::optional<float> duration;
     std::optional<int32_t> num_steps;
+    std::optional<bool> denoise;
     uint64_t seed = 0;
     bool preprocess_reference = true;
     bool postprocess_output = true;
@@ -121,6 +122,30 @@ bool parse_u64(
     }
     parsed = static_cast<uint64_t>(result);
     return true;
+}
+
+bool parse_bool(
+    const std::string& value,
+    bool& parsed) {
+    std::string lower = value;
+    std::transform(
+        lower.begin(),
+        lower.end(),
+        lower.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    if (lower == "1" || lower == "true" ||
+        lower == "on" || lower == "yes") {
+        parsed = true;
+        return true;
+    }
+    if (lower == "0" || lower == "false" ||
+        lower == "off" || lower == "no") {
+        parsed = false;
+        return true;
+    }
+    return false;
 }
 
 bool has_txt_extension(const std::filesystem::path& path) {
@@ -189,6 +214,21 @@ bool parse_arguments(
         }
         if (option == "--no-postprocess") {
             args.postprocess_output = false;
+            continue;
+        }
+        if (option == "--denoise") {
+            args.denoise = true;
+            if (index + 1 < argc) {
+                bool parsed = false;
+                if (parse_bool(argv[index + 1], parsed)) {
+                    args.denoise = parsed;
+                    ++index;
+                }
+            }
+            continue;
+        }
+        if (option == "--no-denoise") {
+            args.denoise = false;
             continue;
         }
         if (index + 1 >= argc) {
@@ -262,14 +302,17 @@ void print_usage() {
         << "  omnivoice-cli --create-prompt --model LM.gguf "
            "--audio-tokenizer AUDIO.gguf --ref-audio REF.wav "
            "--ref-text TEXT_OR_FILE.txt --prompt-output FILE.ovprompt "
-           "[--device CPU|CUDA0] [--no-preprocess]\n"
+           "[--device CPU|CUDA0] [--no-preprocess] "
+           "[--denoise [true|false]] [--no-denoise]\n"
         << "  omnivoice-cli --clone --model LM.gguf "
            "--audio-tokenizer AUDIO.gguf "
            "(--prompt-input FILE.ovprompt | "
            "--ref-audio REF.wav --ref-text TEXT_OR_FILE.txt) "
            "--text TEXT [--output OUT.wav] [--language LANG] "
            "[--device CPU|CUDA0] [--speed F] [--duration SECONDS] "
-           "[--num-step N] [--seed N] [--prompt-output FILE.ovprompt]\n"
+           "[--num-step N] [--seed N] "
+           "[--denoise [true|false]] [--no-denoise] "
+           "[--prompt-output FILE.ovprompt]\n"
         << "  omnivoice-cli --write-test-tone OUTPUT.wav\n"
         << "  omnivoice-cli --help\n\n"
         << "Only Voice Clone is implemented. Input WAV must be 24 kHz mono.\n"
@@ -349,17 +392,17 @@ int show_audio_info(const std::string& path) {
 
 omnivoice::Status load_model(
     const Arguments& args,
-    const omnivoice::OmniVoiceContextParams& params,
-    omnivoice::OmniVoiceContext& context,
+    const omnivoice::GGMLRuntimeParams& params,
+    omnivoice::GGMLRuntime& runtime,
     omnivoice::OmniVoiceModel& model) {
-    omnivoice::Status status = context.load(
+    omnivoice::Status status = runtime.load(
         args.model,
         args.audio_tokenizer,
         params);
     if (!status) {
         return status;
     }
-    return model.load(context, params.log);
+    return model.load(runtime, params.log);
 }
 
 int create_prompt_command(const Arguments& args) {
@@ -376,17 +419,17 @@ int create_prompt_command(const Arguments& args) {
 
     const auto command_start = Clock::now();
     const omnivoice::LogCallback log = make_logger(command_start);
-    omnivoice::OmniVoiceContextParams params;
+    omnivoice::GGMLRuntimeParams params;
     params.device = args.device;
     params.log = log;
-    omnivoice::OmniVoiceContext context;
+    omnivoice::GGMLRuntime runtime;
     omnivoice::OmniVoiceModel model;
     log("loading models");
     const auto load_start = Clock::now();
     omnivoice::Status status = load_model(
         args,
         params,
-        context,
+        runtime,
         model);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
@@ -410,17 +453,16 @@ int create_prompt_command(const Arguments& args) {
         std::to_string(audio.duration_seconds()) + " s in " +
         elapsed_text(audio_start));
 
-    omnivoice::VoiceClonePromptOptions prompt_options;
-    prompt_options.denoise = model.generation_defaults().denoise;
-    prompt_options.preprocess_reference = args.preprocess_reference;
-    prompt_options.log = log;
+    omnivoice::VoiceClonePromptRequest prompt_request;
+    prompt_request.reference_audio = std::move(audio);
+    prompt_request.reference_text = args.reference_text;
+    prompt_request.language = args.language;
+    prompt_request.denoise = args.denoise.value_or(
+        model.generation_defaults().denoise);
+    prompt_request.preprocess_reference = args.preprocess_reference;
+    prompt_request.log = log;
     omnivoice::VoiceClonePrompt prompt;
-    status = model.create_prompt(
-        audio,
-        args.reference_text,
-        args.language,
-        prompt_options,
-        prompt);
+    status = model.create_prompt(prompt_request, prompt);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
         return 1;
@@ -462,17 +504,17 @@ int clone_command(const Arguments& args) {
 
     const auto command_start = Clock::now();
     const omnivoice::LogCallback log = make_logger(command_start);
-    omnivoice::OmniVoiceContextParams params;
+    omnivoice::GGMLRuntimeParams params;
     params.device = args.device;
     params.log = log;
-    omnivoice::OmniVoiceContext context;
+    omnivoice::GGMLRuntime runtime;
     omnivoice::OmniVoiceModel model;
     log("loading models");
     const auto load_start = Clock::now();
     omnivoice::Status status = load_model(
         args,
         params,
-        context,
+        runtime,
         model);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
@@ -481,7 +523,6 @@ int clone_command(const Arguments& args) {
     log("models loaded in " + elapsed_text(load_start));
 
     omnivoice::VoiceClonePrompt prompt;
-    const omnivoice::VoiceClonePrompt* prompt_pointer = nullptr;
     if (!args.prompt_input.empty()) {
         log("loading reusable voice prompt: " + args.prompt_input);
         const auto prompt_start = Clock::now();
@@ -492,18 +533,15 @@ int clone_command(const Arguments& args) {
             std::cerr << "error: " << status.message() << '\n';
             return 1;
         }
-        prompt_pointer = &prompt;
         log(
             "voice prompt ready: " +
             std::to_string(prompt.reference_codes.codebooks) + " x " +
             std::to_string(prompt.reference_codes.frames) + " codes in " +
             elapsed_text(prompt_start));
-    }
-
-    omnivoice::AudioBuffer reference_audio;
-    if (prompt_pointer == nullptr) {
+    } else {
         log("reading reference WAV: " + args.reference_audio);
         const auto audio_start = Clock::now();
+        omnivoice::AudioBuffer reference_audio;
         status = omnivoice::load_wav_24k_mono(
             args.reference_audio,
             reference_audio);
@@ -516,15 +554,25 @@ int clone_command(const Arguments& args) {
             std::to_string(reference_audio.samples.size()) + " samples, " +
             std::to_string(reference_audio.duration_seconds()) + " s in " +
             elapsed_text(audio_start));
+
+        omnivoice::VoiceClonePromptRequest prompt_request;
+        prompt_request.reference_audio = std::move(reference_audio);
+        prompt_request.reference_text = args.reference_text;
+        prompt_request.language = args.language;
+        prompt_request.denoise = args.denoise.value_or(
+            model.generation_defaults().denoise);
+        prompt_request.preprocess_reference = args.preprocess_reference;
+        prompt_request.log = log;
+        status = model.create_prompt(prompt_request, prompt);
+        if (!status) {
+            std::cerr << "error: " << status.message() << '\n';
+            return 1;
+        }
     }
 
     omnivoice::VoiceCloneRequest request;
-    request.reference_audio = std::move(reference_audio);
-    request.reference_text = args.reference_text;
     request.target_text = args.text;
     request.language = args.language;
-    request.voice_clone_prompt = prompt_pointer;
-    request.preprocess_reference = args.preprocess_reference;
     request.speed = args.speed;
     request.seed = args.seed;
     request.duration_seconds = args.duration.value_or(0.0f);
@@ -536,12 +584,14 @@ int clone_command(const Arguments& args) {
         options.num_step = *args.num_steps;
     }
     options.postprocess_output = args.postprocess_output;
+    request.denoise = args.denoise.value_or(options.denoise);
+    options.denoise = request.denoise;
     request.generation_config = options;
 
     omnivoice::VoiceCloneOutput output;
     log("generating target speech codes and audio");
     const auto generation_start = Clock::now();
-    status = model.generate_voice_clone(request, output);
+    status = model.generate_voice_clone(prompt, request, output);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
         return 1;

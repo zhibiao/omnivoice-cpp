@@ -1,8 +1,7 @@
 #include "higgs_tokenizer/encoder.h"
 
-#include "backend_scheduler.h"
 #include "gguf_model.h"
-#include "higgs_tokenizer/resampler.h"
+#include "audio_kit/audio_resampler.h"
 
 #include "ggml.h"
 
@@ -1304,13 +1303,55 @@ Status HiggsAudioEncoder::run_graph(const AudioBuffer& audio, const std::vector<
         return Status::error("Higgs encoder graph is missing tensors");
     }
 
-    BackendScheduler scheduler;
-    Status scheduler_status = scheduler.create(backend_, 32768);
-    if (!scheduler_status) {
-        return scheduler_status;
+    ggml_backend_t fallback = nullptr;
+    ggml_backend_sched_t scheduler = nullptr;
+    const auto release_scheduler = [&]() {
+        if (scheduler != nullptr) {
+            ggml_backend_sched_free(scheduler);
+            scheduler = nullptr;
+        }
+        if (fallback != nullptr) {
+            ggml_backend_free(fallback);
+            fallback = nullptr;
+        }
+    };
+
+    ggml_backend_dev_t primary_device =
+        ggml_backend_get_device(backend_);
+    const bool primary_is_cpu =
+        primary_device != nullptr &&
+        ggml_backend_dev_type(primary_device) ==
+            GGML_BACKEND_DEVICE_TYPE_CPU;
+    ggml_backend_t backends[2] = {backend_, nullptr};
+    ggml_backend_buffer_type_t buffer_types[2] = {
+        ggml_backend_get_default_buffer_type(backend_),
+        nullptr};
+    int backend_count = 1;
+    if (!primary_is_cpu) {
+        fallback = ggml_backend_init_by_name("CPU", nullptr);
+        if (fallback == nullptr) {
+            return Status::error(
+                "failed to initialize CPU fallback backend");
+        }
+        backends[1] = fallback;
+        buffer_types[1] =
+            ggml_backend_get_default_buffer_type(fallback);
+        backend_count = 2;
     }
-    ggml_backend_sched_reset(scheduler.get());
-    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
+    scheduler = ggml_backend_sched_new(
+        backends,
+        buffer_types,
+        backend_count,
+        32768,
+        false,
+        false);
+    if (scheduler == nullptr) {
+        release_scheduler();
+        return Status::error("failed to create backend scheduler");
+    }
+    ggml_backend_sched_reset(scheduler);
+    if (!ggml_backend_sched_alloc_graph(scheduler, graph)) {
+        release_scheduler();
         return Status::error("failed to allocate Higgs encoder graph");
     }
 
@@ -1331,7 +1372,8 @@ Status HiggsAudioEncoder::run_graph(const AudioBuffer& audio, const std::vector<
         ggml_fp32_to_fp16(0.0f));
     ggml_backend_tensor_set(attention_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
 
-    if (ggml_backend_sched_graph_compute(scheduler.get(), graph) != GGML_STATUS_SUCCESS) {
+    if (ggml_backend_sched_graph_compute(scheduler, graph) != GGML_STATUS_SUCCESS) {
+        release_scheduler();
         return Status::error("Higgs encoder graph execution failed");
     }
 
@@ -1368,12 +1410,14 @@ Status HiggsAudioEncoder::run_graph(const AudioBuffer& audio, const std::vector<
             }
             ggml_tensor* tensor = ggml_graph_get_tensor(graph, graph_name.c_str());
             if (tensor == nullptr) {
+                release_scheduler();
                 return Status::error("Higgs encoder graph is missing stage: " + name);
             }
             debug_stages->push_back(read_stage(name, tensor));
         }
     }
 
+    release_scheduler();
     return Status::ok();
 }
 

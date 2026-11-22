@@ -1,4 +1,4 @@
-#include "audio_io.h"
+#include "audio_kit/audio_io.h"
 
 #include <algorithm>
 #include <cmath>
@@ -323,6 +323,53 @@ int main() {
     for (size_t index = 0; index < source.samples.size(); ++index) {
         if (!close_to(loaded.samples[index], source.samples[index], 4e-5f)) {
             std::cerr << "WAV round-trip sample mismatch\n";
+            cleanup();
+            return 1;
+        }
+    }
+
+    // Direct validation coverage for the 24 kHz mono contract.
+    {
+        omnivoice::AudioBuffer empty;
+        if (omnivoice::validate_audio_24k_mono(empty)) {
+            std::cerr << "empty audio should fail validation\n";
+            cleanup();
+            return 1;
+        }
+        omnivoice::AudioBuffer wrong_rate;
+        wrong_rate.samples = {0.0f};
+        wrong_rate.sample_rate = 16000;
+        if (omnivoice::validate_audio_24k_mono(wrong_rate)) {
+            std::cerr << "wrong sample rate should fail validation\n";
+            cleanup();
+            return 1;
+        }
+        omnivoice::AudioBuffer stereo;
+        stereo.samples = {0.0f, 0.0f};
+        stereo.channels = 2;
+        if (omnivoice::validate_audio_24k_mono(stereo)) {
+            std::cerr << "stereo audio should fail validation\n";
+            cleanup();
+            return 1;
+        }
+        omnivoice::AudioBuffer non_finite;
+        non_finite.samples = {0.0f, std::nanf("")};
+        if (omnivoice::validate_audio_24k_mono(non_finite)) {
+            std::cerr << "non-finite audio should fail validation\n";
+            cleanup();
+            return 1;
+        }
+        omnivoice::AudioBuffer out_of_range;
+        out_of_range.samples = {1.5f};
+        if (omnivoice::validate_audio_24k_mono(out_of_range)) {
+            std::cerr << "out-of-range audio should fail validation\n";
+            cleanup();
+            return 1;
+        }
+        omnivoice::AudioBuffer valid;
+        valid.samples = {0.0f, 0.5f, -0.5f};
+        if (!omnivoice::validate_audio_24k_mono(valid)) {
+            std::cerr << "valid audio should pass validation\n";
             cleanup();
             return 1;
         }

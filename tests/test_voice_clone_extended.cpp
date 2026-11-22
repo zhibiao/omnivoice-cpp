@@ -99,10 +99,10 @@ int main() {
 
     try {
         const PromptFixture fixture = read_prompt_fixture();
-        omnivoice::OmniVoiceContextParams params;
+        omnivoice::GGMLRuntimeParams params;
         params.device = "CUDA0";
-        omnivoice::OmniVoiceContext context;
-        omnivoice::Status status = context.load(
+        omnivoice::GGMLRuntime runtime;
+        omnivoice::Status status = runtime.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params);
@@ -111,7 +111,7 @@ int main() {
             return 77;
         }
         omnivoice::OmniVoiceModel model;
-        status = model.load(context);
+        status = model.load(runtime);
         if (!status) {
             throw std::runtime_error(status.message());
         }
@@ -134,14 +134,13 @@ int main() {
         options.fade_duration = 0.0f;
 
         omnivoice::VoiceCloneRequest clone;
-        clone.voice_clone_prompt = &prompt;
         clone.target_text = "你好，OmniVoice！今天用 GGUF 推理。";
         clone.language = "zh";
         clone.target_frames = fixture.target_frames;
         clone.seed = 1234;
         clone.generation_config = options;
         omnivoice::VoiceCloneOutput cloned;
-        status = model.generate_voice_clone(clone, cloned);
+        status = model.generate_voice_clone(prompt, clone, cloned);
         if (!status) {
             throw std::runtime_error(status.message());
         }
@@ -157,6 +156,7 @@ int main() {
         };
         omnivoice::VoiceCloneOutput long_output;
         status = model.generate_voice_clone(
+            prompt,
             long_clone,
             long_output);
         if (!status) {

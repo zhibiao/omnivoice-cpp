@@ -1,4 +1,6 @@
-#include "audio_postprocess.h"
+#include "audio_kit/audio_postprocess.h"
+
+#include "config.h"
 
 #include <algorithm>
 #include <cmath>

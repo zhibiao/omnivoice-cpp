@@ -153,6 +153,17 @@ Linux：
 
 `--ref-text` 支持直接文本或 UTF-8 `.txt` 文件。
 
+`--denoise` 控制是否在 prompt 中加入 `<|denoise|>`，默认取 GGUF 配置
+（通常为 `true`）。`--no-denoise` 等价于 `--denoise false`；关闭后可能
+保留更多参考音频的噪声/表现力，但一致性可能下降。示例：
+
+```bash
+./build/linux-cuda/bin/omnivoice-cli --clone \
+  --prompt-input voices/nana.ovprompt \
+  --text "今天，中国人民正在意气风发推进中国式现代化建设。" \
+  --no-denoise
+```
+
 ## 当前性能
 
 相同负载：实际生成 9.04 秒音频、8 x 221 target cells、32 步扩散、

@@ -1,6 +1,6 @@
 #include "status.h"
 #include "types.h"
-#include "wav_writer.h"
+#include "audio_kit/audio_io.h"
 
 #include <array>
 #include <cstdint>

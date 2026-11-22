@@ -1,7 +1,7 @@
 #pragma once
 
 #include "status.h"
-#include "text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer.h"
 
 #include <cstdint>
 #include <string>

@@ -2,7 +2,7 @@
 
 #include "config.h"
 #include "status.h"
-#include "text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer.h"
 #include "types.h"
 
 #include <cstdint>

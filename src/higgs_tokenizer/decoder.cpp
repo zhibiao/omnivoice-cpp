@@ -1,6 +1,5 @@
 #include "higgs_tokenizer/decoder.h"
 
-#include "backend_scheduler.h"
 #include "gguf_model.h"
 
 #include "ggml.h"
@@ -564,21 +563,50 @@ public:
                 }
             }
 
-            scheduler_ = std::make_unique<BackendScheduler>();
-            Status status = scheduler_->create(
+            ggml_backend_dev_t primary_device =
+                ggml_backend_get_device(decoder_->backend_);
+            const bool primary_is_cpu =
+                primary_device != nullptr &&
+                ggml_backend_dev_type(primary_device) ==
+                    GGML_BACKEND_DEVICE_TYPE_CPU;
+            ggml_backend_t backends[2] = {
                 decoder_->backend_,
-                8192);
-            if (!status) {
-                throw std::runtime_error(status.message());
+                nullptr};
+            ggml_backend_buffer_type_t buffer_types[2] = {
+                ggml_backend_get_default_buffer_type(
+                    decoder_->backend_),
+                nullptr};
+            int backend_count = 1;
+            if (!primary_is_cpu) {
+                fallback_ = ggml_backend_init_by_name("CPU", nullptr);
+                if (fallback_ == nullptr) {
+                    throw std::runtime_error(
+                        "failed to initialize CPU fallback backend");
+                }
+                backends[1] = fallback_;
+                buffer_types[1] =
+                    ggml_backend_get_default_buffer_type(fallback_);
+                backend_count = 2;
+            }
+            scheduler_ = ggml_backend_sched_new(
+                backends,
+                buffer_types,
+                backend_count,
+                8192,
+                false,
+                false);
+            if (scheduler_ == nullptr) {
+                throw std::runtime_error(
+                    "failed to create backend scheduler");
             }
             for (ggml_tensor* input : code_inputs_) {
                 ggml_backend_sched_set_tensor_backend(
-                    scheduler_->get(),
+                    scheduler_,
                     input,
                     decoder_->backend_);
             }
             if (!ggml_backend_sched_alloc_graph(
-                    scheduler_->get(),
+                    scheduler_,
                     graph_)) {
                 throw std::runtime_error(
                     "failed to allocate Higgs decoder graph");
@@ -633,7 +661,7 @@ public:
                     sizeof(int32_t));
         }
         if (ggml_backend_sched_graph_compute(
-                scheduler_->get(),
+                scheduler_,
                 graph_) != GGML_STATUS_SUCCESS) {
             return Status::error(
                 "Higgs decoder graph execution failed");
@@ -669,7 +697,14 @@ public:
     }
 
     void release() noexcept {
-        scheduler_.reset();
+        if (scheduler_ != nullptr) {
+            ggml_backend_sched_free(scheduler_);
+            scheduler_ = nullptr;
+        }
+        if (fallback_ != nullptr) {
+            ggml_backend_free(fallback_);
+            fallback_ = nullptr;
+        }
         if (context_ != nullptr) {
             ggml_free(context_);
             context_ = nullptr;
@@ -692,7 +727,8 @@ private:
     std::vector<uint8_t> metadata_;
     ggml_context* context_ = nullptr;
     ggml_cgraph* graph_ = nullptr;
-    std::unique_ptr<BackendScheduler> scheduler_;
+    ggml_backend_t fallback_ = nullptr;
+    ggml_backend_sched_t scheduler_ = nullptr;
     std::vector<ggml_tensor*> code_inputs_;
     ggml_tensor* output_ = nullptr;
     std::vector<DecoderDebugStageSpec> debug_specs_;

@@ -1,7 +1,7 @@
 #include "config.h"
 #include "gguf_model.h"
 #include "prompt_builder.h"
-#include "text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer.h"
 
 #include <cstdint>
 #include <iostream>

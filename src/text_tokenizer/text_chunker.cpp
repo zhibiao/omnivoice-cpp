@@ -1,4 +1,4 @@
-#include "text_chunker.h"
+#include "text_tokenizer/text_chunker.h"
 
 #include <algorithm>
 #include <cstddef>

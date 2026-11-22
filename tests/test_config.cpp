@@ -1,6 +1,6 @@
 #include "config.h"
 #include "gguf_model.h"
-#include "text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer.h"
 
 #include <cmath>
 #include <iostream>

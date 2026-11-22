@@ -77,25 +77,25 @@ function(omnivoice_configure_target target)
 endfunction()
 
 add_library(omnivoice-core STATIC
-    src/audio_postprocess.cpp
-    src/audio_io.cpp
+    src/audio_kit/audio_io.cpp
+    src/audio_kit/audio_postprocess.cpp
+    src/audio_kit/audio_resampler.cpp
     src/config.cpp
     src/diffusion_decoder/diffusion_decoder.cpp
     src/diffusion_decoder/mask_schedule.cpp
     src/diffusion_decoder/token_selector.cpp
     src/duration_estimator.cpp
     src/gguf_model.cpp
+    src/ggml_runtime.cpp
     src/higgs_tokenizer/decoder.cpp
     src/higgs_tokenizer/encoder.cpp
-    src/higgs_tokenizer/resampler.cpp
     src/omnivoice.cpp
     src/prompt_builder.cpp
     src/qwen3_lm/qwen3_block.cpp
     src/qwen3_lm/qwen3_model.cpp
-    src/text_tokenizer.cpp
-    src/text_chunker.cpp
+    src/text_tokenizer/text_chunker.cpp
+    src/text_tokenizer/text_tokenizer.cpp
     src/voice_clone_prompt.cpp
-    src/wav_writer.cpp
 )
 omnivoice_configure_target(omnivoice-core)
 target_include_directories(omnivoice-core PUBLIC

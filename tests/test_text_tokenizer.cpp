@@ -1,6 +1,6 @@
 #include "gguf_model.h"
-#include "text_tokenizer.h"
-#include "text_tokenizer_internal.h"
+#include "text_tokenizer/text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer_internal.h"
 
 #include <nlohmann/json.hpp>
 

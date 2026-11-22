@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace omnivoice {
 
@@ -33,6 +34,11 @@ Status load_wav_24k_mono(
     WavInfo* info = nullptr);
 
 Status save_wav_24k_mono(
+    const std::string& path,
+    const AudioBuffer& audio);
+
+// Writes 16-bit PCM; sample rate and channel count come from the buffer.
+Status write_wav(
     const std::string& path,
     const AudioBuffer& audio);
 

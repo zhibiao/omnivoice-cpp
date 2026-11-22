@@ -157,11 +157,11 @@ int main() {
     try {
         const EncoderFixture fixture = read_encoder_fixture();
         const char* device = std::getenv("OMNIVOICE_TEST_DEVICE");
-        omnivoice::OmniVoiceContextParams params;
+        omnivoice::GGMLRuntimeParams params;
         params.device = device == nullptr ? "CPU" : device;
 
-        omnivoice::OmniVoiceContext context;
-        omnivoice::Status status = context.load(
+        omnivoice::GGMLRuntime runtime;
+        omnivoice::Status status = runtime.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params);
@@ -174,7 +174,7 @@ int main() {
         }
 
         omnivoice::OmniVoiceModel model;
-        status = model.load(context);
+        status = model.load(runtime);
         if (!status) {
             throw std::runtime_error(status.message());
         }
@@ -184,16 +184,14 @@ int main() {
         reference_audio.sample_rate = 24000;
         reference_audio.channels = 1;
 
-        omnivoice::VoiceClonePromptOptions prompt_options;
-        prompt_options.denoise = false;
-        prompt_options.preprocess_reference = false;
+        omnivoice::VoiceClonePromptRequest prompt_request;
+        prompt_request.reference_audio = reference_audio;
+        prompt_request.reference_text = "Hello.";
+        prompt_request.language = "en";
+        prompt_request.denoise = false;
+        prompt_request.preprocess_reference = false;
         omnivoice::VoiceClonePrompt encoded_prompt;
-        status = model.create_prompt(
-            reference_audio,
-            "Hello.",
-            "en",
-            prompt_options,
-            encoded_prompt);
+        status = model.create_prompt(prompt_request, encoded_prompt);
         if (!status) {
             throw std::runtime_error(status.message());
         }
@@ -238,7 +236,6 @@ int main() {
         options.fade_duration = 0.0f;
 
         omnivoice::VoiceCloneRequest request;
-        request.voice_clone_prompt = &loaded_prompt;
         request.target_text = "Hi.";
         request.language = "en";
         request.target_frames = target_frames;
@@ -246,7 +243,7 @@ int main() {
         request.generation_config = options;
 
         omnivoice::VoiceCloneOutput output;
-        status = model.generate_voice_clone(request, output);
+        status = model.generate_voice_clone(loaded_prompt, request, output);
         if (!status) {
             throw std::runtime_error(status.message());
         }

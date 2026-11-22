@@ -75,7 +75,7 @@ Status run_diffusion_decoder(
     const OmniVoiceLMConfig& config,
     const VoiceCloneConfig& options,
     uint64_t seed,
-    DiffusionLmRunner& runner,
+    OmniVoiceLM& lm,
     DiffusionDecodeResult& result,
     const LogCallback& log) {
     result = {};
@@ -147,10 +147,11 @@ Status run_diffusion_decoder(
         read_host_logits
             ? "diffusion LM: single packed graph + host stochastic sampler"
             : "diffusion LM: single packed graph + fused deterministic sampler");
-    status = runner.init_graph(
+    status = lm.init_diffusion_graph(
         conditional,
         unconditional,
         read_host_logits,
+        false,
         selector_options.guidance_scale);
     if (!status) {
         return status;
@@ -165,7 +166,7 @@ Status run_diffusion_decoder(
         step_unconditional.input_ids = current;
         OmniVoiceLmPackedOutput lm_output;
         const auto lm_start = Clock::now();
-        status = runner.run_diffusion(
+        status = lm.run_diffusion_graph(
             conditional,
             step_unconditional,
             lm_output);

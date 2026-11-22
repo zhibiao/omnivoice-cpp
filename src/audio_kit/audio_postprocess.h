@@ -1,12 +1,13 @@
 #pragma once
 
-#include "config.h"
 #include "status.h"
 #include "types.h"
 
 #include <vector>
 
 namespace omnivoice {
+
+struct VoiceCloneConfig;
 
 Status cross_fade_audio_chunks(
     const std::vector<AudioBuffer>& chunks,

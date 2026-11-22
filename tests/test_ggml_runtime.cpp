@@ -7,26 +7,26 @@
 #include <vector>
 
 int main() {
-    omnivoice::OmniVoiceContextParams cpu;
+    omnivoice::GGMLRuntimeParams cpu;
     cpu.device = "CPU";
 
-    omnivoice::OmniVoiceContext runtime_only;
-    omnivoice::Status status = runtime_only.init_runtime(cpu);
+    omnivoice::GGMLRuntime runtime_only;
+    omnivoice::Status status = runtime_only.init(cpu);
     if (!status ||
         !runtime_only.backend() ||
         runtime_only.is_ready()) {
         std::cerr << "runtime-only initialization failed\n";
         return 1;
     }
-    if (runtime_only.init_runtime(cpu)) {
+    if (runtime_only.init(cpu)) {
         std::cerr << "duplicate runtime initialization must fail\n";
         return 1;
     }
 
-    omnivoice::OmniVoiceContext invalid;
-    omnivoice::OmniVoiceContextParams invalid_params;
+    omnivoice::GGMLRuntime invalid;
+    omnivoice::GGMLRuntimeParams invalid_params;
     invalid_params.device = "OmniVoiceDeviceThatDoesNotExist";
-    if (invalid.init_runtime(invalid_params) || invalid.is_ready()) {
+    if (invalid.init(invalid_params) || invalid.is_ready()) {
         std::cerr << "invalid device must fail\n";
         return 1;
     }
@@ -44,15 +44,15 @@ int main() {
     }
 
     const char* device = std::getenv("OMNIVOICE_TEST_DEVICE");
-    omnivoice::OmniVoiceContextParams params;
+    omnivoice::GGMLRuntimeParams params;
     params.device = device == nullptr ? "CPU" : device;
     std::vector<std::string> logs;
     params.log = [&](const std::string& line) {
         logs.push_back(line);
     };
 
-    omnivoice::OmniVoiceContext context;
-    status = context.load(
+    omnivoice::GGMLRuntime runtime;
+    status = runtime.load(
         OMNIVOICE_LM_GGUF,
         OMNIVOICE_AUDIO_GGUF,
         params);
@@ -64,20 +64,20 @@ int main() {
         std::cerr << status.message() << '\n';
         return 1;
     }
-    if (!context.is_ready() || !context.backend()) {
-        std::cerr << "loaded context is not ready\n";
+    if (!runtime.is_ready() || !runtime.backend()) {
+        std::cerr << "loaded runtime is not ready\n";
         return 1;
     }
-    if (context.load(
+    if (runtime.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params)) {
-        std::cerr << "duplicate context load must fail\n";
+        std::cerr << "duplicate runtime load must fail\n";
         return 1;
     }
 
     omnivoice::OmniVoiceModel model;
-    status = model.load(context, params.log);
+    status = model.load(runtime, params.log);
     if (!status || !model.is_loaded()) {
         std::cerr << status.message() << '\n';
         return 1;
@@ -92,7 +92,7 @@ int main() {
         std::cerr << "model load did not emit readiness log\n";
         return 1;
     }
-    if (model.load(context)) {
+    if (model.load(runtime)) {
         std::cerr << "duplicate model load must fail\n";
         return 1;
     }

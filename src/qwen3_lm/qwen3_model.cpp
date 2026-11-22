@@ -1,6 +1,5 @@
 #include "qwen3_lm/qwen3_model.h"
 
-#include "backend_scheduler.h"
 #include "gguf_model.h"
 
 #include "ggml.h"
@@ -432,444 +431,6 @@ Status OmniVoiceLM::validate_input(
     return Status::ok();
 }
 
-class OmniVoiceLM::LmGraph {
-public:
-    LmGraph() = default;
-
-    ~LmGraph() {
-        release();
-    }
-
-    LmGraph(const LmGraph&) = delete;
-    LmGraph& operator=(const LmGraph&) = delete;
-
-    Status build(
-        const OmniVoiceLM& model,
-        const OmniVoiceLmInput& input,
-        bool expose_hidden);
-    Status run(
-        const OmniVoiceLmInput& input,
-        OmniVoiceLmOutput& output,
-        bool read_hidden,
-        bool read_logits);
-    void release() noexcept;
-
-private:
-    struct Key {
-        int32_t sequence_length = 0;
-        int32_t codebooks = 0;
-        int32_t target_start = 0;
-        int32_t target_frames = 0;
-    };
-
-    bool matches(const OmniVoiceLmInput& input) const noexcept;
-    void upload_static_inputs(const OmniVoiceLmInput& input);
-    void upload_audio_ids(const OmniVoiceLmInput& input);
-
-    const OmniVoiceLM* model_ = nullptr;
-    Key key_;
-    bool expose_hidden_ = false;
-    std::vector<uint8_t> metadata_;
-    ggml_context* context_ = nullptr;
-    ggml_cgraph* graph_ = nullptr;
-    std::unique_ptr<BackendScheduler> scheduler_;
-    ggml_tensor* text_ids_ = nullptr;
-    ggml_tensor* text_weight_ = nullptr;
-    ggml_tensor* audio_weight_ = nullptr;
-    ggml_tensor* positions_ = nullptr;
-    std::vector<ggml_tensor*> audio_ids_;
-    ggml_tensor* hidden_ = nullptr;
-    ggml_tensor* logits_ = nullptr;
-};
-
-Status OmniVoiceLM::forward(const OmniVoiceLmInput& input, OmniVoiceLmOutput& output) const {
-    output = {};
-    Status status = validate_input(input);
-    if (!status) {
-        return status;
-    }
-
-    LmGraph graph;
-    status = graph.build(*this, input, true);
-    if (!status) {
-        return status;
-    }
-    return graph.run(input, output, true, true);
-}
-
-Status OmniVoiceLM::LmGraph::build(
-    const OmniVoiceLM& model,
-    const OmniVoiceLmInput& input,
-    bool expose_hidden) {
-    release();
-
-    Status status = model.validate_input(input);
-    if (!status) {
-        return status;
-    }
-
-    model_ = &model;
-    expose_hidden_ = expose_hidden;
-    metadata_.resize(
-        ggml_tensor_overhead() * 32768 +
-        ggml_graph_overhead());
-    ggml_init_params params{};
-    params.mem_size = metadata_.size();
-    params.mem_buffer = metadata_.data();
-    params.no_alloc = true;
-    context_ = ggml_init(params);
-    if (context_ == nullptr) {
-        metadata_.clear();
-        release();
-        return Status::error(
-            "failed to create cached OmniVoice LM graph context");
-    }
-
-    try {
-        graph_ = model.build_graph(context_, input, expose_hidden);
-        text_ids_ = ggml_graph_get_tensor(graph_, "lm_text_ids");
-        text_weight_ = ggml_graph_get_tensor(graph_, "lm_text_weight");
-        audio_weight_ = ggml_graph_get_tensor(graph_, "lm_audio_weight");
-        positions_ = ggml_graph_get_tensor(graph_, "lm_positions");
-        hidden_ = ggml_graph_get_tensor(graph_, "lm_hidden");
-        logits_ = ggml_graph_get_tensor(graph_, "lm_audio_logits");
-        if (text_ids_ == nullptr ||
-            text_weight_ == nullptr ||
-            audio_weight_ == nullptr ||
-            positions_ == nullptr ||
-            hidden_ == nullptr ||
-            logits_ == nullptr) {
-            throw std::runtime_error(
-                "cached OmniVoice LM graph is missing tensors");
-        }
-
-        audio_ids_.reserve(static_cast<size_t>(input.codebooks));
-        for (int32_t codebook = 0;
-             codebook < input.codebooks;
-             ++codebook) {
-            const std::string name =
-                "lm_audio_ids." + std::to_string(codebook);
-            ggml_tensor* ids =
-                ggml_graph_get_tensor(graph_, name.c_str());
-            if (ids == nullptr) {
-                throw std::runtime_error(
-                    "cached OmniVoice LM graph is missing " + name);
-            }
-            audio_ids_.push_back(ids);
-        }
-
-        scheduler_ = std::make_unique<BackendScheduler>();
-        status = scheduler_->create(model.backend_, 32768);
-        if (!status) {
-            throw std::runtime_error(status.message());
-        }
-        ggml_backend_sched_set_tensor_backend(
-            scheduler_->get(), text_ids_, model.backend_);
-        ggml_backend_sched_set_tensor_backend(
-            scheduler_->get(), text_weight_, model.backend_);
-        ggml_backend_sched_set_tensor_backend(
-            scheduler_->get(), audio_weight_, model.backend_);
-        ggml_backend_sched_set_tensor_backend(
-            scheduler_->get(), positions_, model.backend_);
-        for (ggml_tensor* ids : audio_ids_) {
-            ggml_backend_sched_set_tensor_backend(
-                scheduler_->get(), ids, model.backend_);
-        }
-        if (!ggml_backend_sched_alloc_graph(
-                scheduler_->get(), graph_)) {
-            throw std::runtime_error(
-                "failed to allocate cached OmniVoice LM graph");
-        }
-
-        key_ = {
-            input.sequence_length,
-            input.codebooks,
-            input.target_start,
-            input.target_frames,
-        };
-        upload_static_inputs(input);
-        upload_audio_ids(input);
-        return Status::ok();
-    } catch (const std::exception& error) {
-        status = Status::error(error.what());
-    }
-
-    release();
-    return status;
-}
-
-ggml_cgraph* OmniVoiceLM::build_graph(
-    ggml_context* context,
-    const OmniVoiceLmInput& input,
-    bool expose_hidden) const {
-    const int32_t sequence = input.sequence_length;
-    const int32_t codebooks = input.codebooks;
-    ggml_tensor* text_ids = ggml_new_tensor_1d(context, GGML_TYPE_I32, sequence);
-    ggml_set_name(text_ids, "lm_text_ids");
-    ggml_set_input(text_ids);
-    ggml_tensor* text_weight = ggml_new_tensor_1d(context, GGML_TYPE_F32, sequence);
-    ggml_set_name(text_weight, "lm_text_weight");
-    ggml_set_input(text_weight);
-    ggml_tensor* audio_weight = ggml_new_tensor_1d(context, GGML_TYPE_F32, sequence);
-    ggml_set_name(audio_weight, "lm_audio_weight");
-    ggml_set_input(audio_weight);
-    ggml_tensor* positions = ggml_new_tensor_1d(context, GGML_TYPE_I32, sequence);
-    ggml_set_name(positions, "lm_positions");
-    ggml_set_input(positions);
-    std::vector<ggml_tensor*> audio_ids;
-    audio_ids.reserve(static_cast<size_t>(codebooks));
-    for (int32_t codebook = 0; codebook < codebooks; ++codebook) {
-        ggml_tensor* ids = ggml_new_tensor_1d(context, GGML_TYPE_I32, sequence);
-        const std::string name = "lm_audio_ids." + std::to_string(codebook);
-        ggml_set_name(ids, name.c_str());
-        ggml_set_input(ids);
-        audio_ids.push_back(ids);
-    }
-
-    ggml_tensor* text_embeddings =
-        ggml_get_rows(context, weight("llm.embed_tokens.weight"), text_ids);
-    ggml_tensor* audio_embeddings = nullptr;
-    for (int32_t codebook = 0; codebook < codebooks; ++codebook) {
-        ggml_tensor* embedding = ggml_get_rows(context, weight("audio_embeddings.weight"),
-                                               audio_ids[static_cast<size_t>(codebook)]);
-        audio_embeddings = audio_embeddings == nullptr
-                               ? embedding
-                               : ggml_add(context, audio_embeddings, embedding);
-    }
-    ggml_tensor* text_part =
-        ggml_mul(context, text_embeddings, repeat_vector(context, text_weight, text_embeddings));
-    ggml_tensor* audio_part =
-        ggml_mul(context, audio_embeddings, repeat_vector(context, audio_weight, audio_embeddings));
-    ggml_tensor* hidden = ggml_add(context, text_part, audio_part);
-
-    for (const Qwen3BlockWeights& block : blocks_) {
-        hidden = build_qwen3_block(
-            context,
-            config_.llm,
-            block,
-            hidden,
-            positions,
-            nullptr);
-    }
-    hidden = rms_norm(context, hidden, weight("llm.norm.weight"), config_.llm.rms_norm_epsilon);
-    ggml_set_name(hidden, "lm_hidden");
-    if (expose_hidden) {
-        ggml_set_output(hidden);
-    }
-
-    ggml_tensor* target_hidden =
-        ggml_view_2d(context, hidden, config_.llm.hidden_size, input.target_frames, hidden->nb[1],
-                     static_cast<size_t>(input.target_start) * hidden->nb[1]);
-    target_hidden =
-        ggml_cont_2d(context, target_hidden, config_.llm.hidden_size, input.target_frames);
-    ggml_tensor* logits_flat = linear(context, weight("audio_heads.weight"), target_hidden);
-    ggml_set_name(logits_flat, "lm_audio_logits");
-    ggml_set_output(logits_flat);
-
-    ggml_cgraph* graph = ggml_new_graph_custom(context, 32768, false);
-    if (expose_hidden) {
-        ggml_build_forward_expand(graph, hidden);
-    }
-    ggml_build_forward_expand(graph, logits_flat);
-    return graph;
-}
-
-Status OmniVoiceLM::LmGraph::run(
-    const OmniVoiceLmInput& input,
-    OmniVoiceLmOutput& output,
-    bool read_hidden,
-    bool read_logits) {
-    output = {};
-    if (model_ == nullptr ||
-        context_ == nullptr ||
-        graph_ == nullptr ||
-        scheduler_ == nullptr) {
-        return Status::error(
-            "cached OmniVoice LM graph is not initialized");
-    }
-    if (!matches(input)) {
-        return Status::error(
-            "cached OmniVoice LM graph shape mismatch");
-    }
-    if (read_hidden && !expose_hidden_) {
-        return Status::error(
-            "cached OmniVoice LM graph does not expose hidden states");
-    }
-
-    const int32_t sequence = input.sequence_length;
-    const int32_t codebooks = input.codebooks;
-
-    upload_audio_ids(input);
-
-    if (ggml_backend_sched_graph_compute(
-            scheduler_->get(), graph_) != GGML_STATUS_SUCCESS) {
-        return Status::error("OmniVoice LM graph execution failed");
-    }
-
-    if (read_hidden) {
-        const size_t hidden_size =
-            static_cast<size_t>(model_->config_.llm.hidden_size);
-        output.hidden.resize(
-            hidden_size * static_cast<size_t>(sequence));
-        ggml_backend_tensor_get(
-            hidden_,
-            output.hidden.data(),
-            0,
-            output.hidden.size() * sizeof(float));
-    }
-
-    output.target_logits_tensor = logits_;
-    if (read_logits) {
-        const size_t target_frames =
-            static_cast<size_t>(input.target_frames);
-        const size_t vocab =
-            static_cast<size_t>(model_->config_.audio_vocab_size);
-        std::vector<float> flat_logits(
-            static_cast<size_t>(codebooks) *
-            vocab *
-            target_frames);
-        ggml_backend_tensor_get(
-            logits_,
-            flat_logits.data(),
-            0,
-            flat_logits.size() * sizeof(float));
-        output.target_logits.resize(flat_logits.size());
-        for (size_t frame = 0; frame < target_frames; ++frame) {
-            for (size_t codebook = 0;
-                 codebook < static_cast<size_t>(codebooks);
-                 ++codebook) {
-                const size_t source_offset =
-                    frame *
-                        static_cast<size_t>(codebooks) *
-                        vocab +
-                    codebook * vocab;
-                const size_t destination_offset =
-                    codebook *
-                        target_frames *
-                        vocab +
-                    frame * vocab;
-                std::copy(
-                    flat_logits.begin() +
-                        static_cast<std::ptrdiff_t>(source_offset),
-                    flat_logits.begin() +
-                        static_cast<std::ptrdiff_t>(
-                            source_offset + vocab),
-                    output.target_logits.begin() +
-                        static_cast<std::ptrdiff_t>(
-                            destination_offset));
-            }
-        }
-    }
-
-    return Status::ok();
-}
-
-bool OmniVoiceLM::LmGraph::matches(
-    const OmniVoiceLmInput& input) const noexcept {
-    return key_.sequence_length == input.sequence_length &&
-        key_.codebooks == input.codebooks &&
-        key_.target_start == input.target_start &&
-        key_.target_frames == input.target_frames;
-}
-
-void OmniVoiceLM::LmGraph::upload_static_inputs(
-    const OmniVoiceLmInput& input) {
-    const int32_t sequence = input.sequence_length;
-    std::vector<int32_t> text_ids_value(
-        input.input_ids.begin(),
-        input.input_ids.begin() + sequence);
-    ggml_backend_tensor_set(
-        text_ids_,
-        text_ids_value.data(),
-        0,
-        text_ids_value.size() * sizeof(int32_t));
-
-    std::vector<int32_t> position_values(
-        static_cast<size_t>(sequence));
-    std::vector<float> text_weight_value(
-        static_cast<size_t>(sequence));
-    std::vector<float> audio_weight_value(
-        static_cast<size_t>(sequence));
-    for (int32_t index = 0; index < sequence; ++index) {
-        position_values[static_cast<size_t>(index)] = index;
-        const bool is_audio =
-            input.audio_mask[static_cast<size_t>(index)] != 0;
-        text_weight_value[static_cast<size_t>(index)] =
-            is_audio ? 0.0f : 1.0f;
-        audio_weight_value[static_cast<size_t>(index)] =
-            is_audio ? 1.0f : 0.0f;
-    }
-    ggml_backend_tensor_set(
-        text_weight_,
-        text_weight_value.data(),
-        0,
-        text_weight_value.size() * sizeof(float));
-    ggml_backend_tensor_set(
-        audio_weight_,
-        audio_weight_value.data(),
-        0,
-        audio_weight_value.size() * sizeof(float));
-    ggml_backend_tensor_set(
-        positions_,
-        position_values.data(),
-        0,
-        position_values.size() * sizeof(int32_t));
-
-}
-
-void OmniVoiceLM::LmGraph::upload_audio_ids(
-    const OmniVoiceLmInput& input) {
-    const int32_t sequence = input.sequence_length;
-    const int32_t codebooks = input.codebooks;
-    for (int32_t codebook = 0;
-         codebook < codebooks;
-         ++codebook) {
-        std::vector<int32_t> ids(
-            static_cast<size_t>(sequence));
-        for (int32_t position = 0;
-             position < sequence;
-             ++position) {
-            const bool is_audio =
-                input.audio_mask[
-                    static_cast<size_t>(position)] != 0;
-            const int32_t token = is_audio
-                ? input.input_ids[
-                    static_cast<size_t>(codebook) *
-                        static_cast<size_t>(sequence) +
-                    static_cast<size_t>(position)]
-                : 0;
-            ids[static_cast<size_t>(position)] =
-                token +
-                codebook * model_->config_.audio_vocab_size;
-        }
-        ggml_backend_tensor_set(
-            audio_ids_[static_cast<size_t>(codebook)],
-            ids.data(),
-            0,
-            ids.size() * sizeof(int32_t));
-    }
-}
-
-void OmniVoiceLM::LmGraph::release() noexcept {
-    scheduler_.reset();
-    if (context_ != nullptr) {
-        ggml_free(context_);
-        context_ = nullptr;
-    }
-    metadata_.clear();
-    graph_ = nullptr;
-    model_ = nullptr;
-    key_ = {};
-    expose_hidden_ = false;
-    text_ids_ = nullptr;
-    text_weight_ = nullptr;
-    audio_weight_ = nullptr;
-    positions_ = nullptr;
-    audio_ids_.clear();
-    hidden_ = nullptr;
-    logits_ = nullptr;
-}
-
 class OmniVoiceLM::DiffusionGraph {
 public:
     DiffusionGraph() = default;
@@ -886,6 +447,7 @@ public:
         const OmniVoiceLmInput& conditional,
         const OmniVoiceLmInput& unconditional,
         bool read_host_logits,
+        bool expose_hidden,
         float guidance_scale);
     Status run(
         const OmniVoiceLmInput& conditional,
@@ -908,7 +470,7 @@ private:
         const OmniVoiceLmInput& conditional,
         const OmniVoiceLmInput& unconditional,
         float guidance_scale) const noexcept;
-    ggml_cgraph* build_graph(
+    ggml_cgraph* build_diffusion_graph(
         ggml_context* context,
         const OmniVoiceLmInput& conditional,
         const OmniVoiceLmInput& unconditional,
@@ -923,13 +485,15 @@ private:
     const OmniVoiceLM* model_ = nullptr;
     Key key_;
     bool read_host_logits_ = false;
+    bool expose_hidden_ = false;
     std::vector<uint8_t> metadata_;
     std::vector<uint8_t> input_metadata_;
     ggml_context* context_ = nullptr;
     ggml_context* input_context_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
     ggml_cgraph* graph_ = nullptr;
-    std::unique_ptr<BackendScheduler> scheduler_;
+    ggml_backend_t fallback_ = nullptr;
+    ggml_backend_sched_t scheduler_ = nullptr;
     ggml_tensor* conditional_text_ids_ = nullptr;
     ggml_tensor* conditional_text_weight_ = nullptr;
     ggml_tensor* conditional_audio_weight_ = nullptr;
@@ -944,6 +508,7 @@ private:
     ggml_tensor* unconditional_logits_ = nullptr;
     ggml_tensor* predictions_ = nullptr;
     ggml_tensor* confidence_ = nullptr;
+    ggml_tensor* hidden_ = nullptr;
     ggml_tensor* token_mask_ = nullptr;
 };
 
@@ -952,6 +517,7 @@ Status OmniVoiceLM::DiffusionGraph::build(
     const OmniVoiceLmInput& conditional,
     const OmniVoiceLmInput& unconditional,
     bool read_host_logits,
+    bool expose_hidden,
     float guidance_scale) {
     release();
     Status status = model.validate_input(conditional);
@@ -975,6 +541,7 @@ Status OmniVoiceLM::DiffusionGraph::build(
 
     model_ = &model;
     read_host_logits_ = read_host_logits;
+    expose_hidden_ = expose_hidden;
     uint32_t guidance_bits = 0;
     static_assert(sizeof(guidance_bits) == sizeof(guidance_scale));
     std::memcpy(&guidance_bits, &guidance_scale, sizeof(guidance_bits));
@@ -1023,7 +590,7 @@ Status OmniVoiceLM::DiffusionGraph::build(
         ggml_set_name(token_mask_, "lm_token_mask");
         ggml_set_input(token_mask_);
 
-        graph_ = build_graph(
+        graph_ = build_diffusion_graph(
             context_,
             conditional,
             unconditional,
@@ -1052,6 +619,9 @@ Status OmniVoiceLM::DiffusionGraph::build(
             ggml_graph_get_tensor(graph_, "lm_predictions");
         confidence_ =
             ggml_graph_get_tensor(graph_, "lm_confidence");
+        if (expose_hidden_) {
+            hidden_ = ggml_graph_get_tensor(graph_, "lm_hidden");
+        }
         if (conditional_text_ids_ == nullptr ||
             conditional_text_weight_ == nullptr ||
             conditional_audio_weight_ == nullptr ||
@@ -1063,7 +633,8 @@ Status OmniVoiceLM::DiffusionGraph::build(
             conditional_logits_ == nullptr ||
             unconditional_logits_ == nullptr ||
             predictions_ == nullptr ||
-            confidence_ == nullptr) {
+            confidence_ == nullptr ||
+            (expose_hidden_ && hidden_ == nullptr)) {
             throw std::runtime_error(
                 "packed OmniVoice LM graph is missing tensors");
         }
@@ -1101,10 +672,37 @@ Status OmniVoiceLM::DiffusionGraph::build(
             input_buffer_,
             GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
 
-        scheduler_ = std::make_unique<BackendScheduler>();
-        status = scheduler_->create(model.backend_, 32768);
-        if (!status) {
-            throw std::runtime_error(status.message());
+        ggml_backend_dev_t primary_device =
+            ggml_backend_get_device(model.backend_);
+        const bool primary_is_cpu =
+            primary_device != nullptr &&
+            ggml_backend_dev_type(primary_device) ==
+                GGML_BACKEND_DEVICE_TYPE_CPU;
+        ggml_backend_t backends[2] = {model.backend_, nullptr};
+        ggml_backend_buffer_type_t buffer_types[2] = {
+            ggml_backend_get_default_buffer_type(model.backend_),
+            nullptr};
+        int backend_count = 1;
+        if (!primary_is_cpu) {
+            fallback_ = ggml_backend_init_by_name("CPU", nullptr);
+            if (fallback_ == nullptr) {
+                throw std::runtime_error(
+                    "failed to initialize CPU fallback backend");
+            }
+            backends[1] = fallback_;
+            buffer_types[1] =
+                ggml_backend_get_default_buffer_type(fallback_);
+            backend_count = 2;
+        }
+        scheduler_ = ggml_backend_sched_new(
+            backends,
+            buffer_types,
+            backend_count,
+            32768,
+            false,
+            false);
+        if (scheduler_ == nullptr) {
+            throw std::runtime_error("failed to create backend scheduler");
         }
         for (ggml_tensor* input : {
                  conditional_text_ids_,
@@ -1117,18 +715,18 @@ Status OmniVoiceLM::DiffusionGraph::build(
                  unconditional_positions_,
                  token_mask_}) {
             ggml_backend_sched_set_tensor_backend(
-                scheduler_->get(), input, model.backend_);
+                scheduler_, input, model.backend_);
         }
         for (ggml_tensor* ids : conditional_audio_ids_) {
             ggml_backend_sched_set_tensor_backend(
-                scheduler_->get(), ids, model.backend_);
+                scheduler_, ids, model.backend_);
         }
         for (ggml_tensor* ids : unconditional_audio_ids_) {
             ggml_backend_sched_set_tensor_backend(
-                scheduler_->get(), ids, model.backend_);
+                scheduler_, ids, model.backend_);
         }
         if (!ggml_backend_sched_alloc_graph(
-                scheduler_->get(),
+                scheduler_,
                 graph_)) {
             throw std::runtime_error(
                 "failed to allocate packed OmniVoice LM graph");
@@ -1157,7 +755,7 @@ Status OmniVoiceLM::DiffusionGraph::build(
     return status;
 }
 
-ggml_cgraph* OmniVoiceLM::DiffusionGraph::build_graph(
+ggml_cgraph* OmniVoiceLM::DiffusionGraph::build_diffusion_graph(
     ggml_context* context,
     const OmniVoiceLmInput& conditional,
     const OmniVoiceLmInput& unconditional,
@@ -1256,6 +854,10 @@ ggml_cgraph* OmniVoiceLM::DiffusionGraph::build_graph(
         hidden,
         model_->weight("llm.norm.weight"),
         model_->config_.llm.rms_norm_epsilon);
+    ggml_set_name(hidden, "lm_hidden");
+    if (expose_hidden_) {
+        ggml_set_output(hidden);
+    }
     ggml_tensor* conditional_target_hidden = ggml_cont_2d(
         context,
         ggml_view_2d(
@@ -1358,6 +960,9 @@ ggml_cgraph* OmniVoiceLM::DiffusionGraph::build_graph(
     ggml_set_output(confidence);
 
     ggml_cgraph* graph = ggml_new_graph_custom(context, 32768, false);
+    if (expose_hidden_) {
+        ggml_build_forward_expand(graph, hidden);
+    }
     ggml_build_forward_expand(graph, predictions);
     ggml_build_forward_expand(graph, confidence);
     ggml_build_forward_expand(graph, conditional_logits);
@@ -1418,6 +1023,21 @@ Status OmniVoiceLM::DiffusionGraph::run(
     output.confidence_tensor = confidence_;
     output.conditional_target_logits_tensor = conditional_logits_;
     output.unconditional_target_logits_tensor = unconditional_logits_;
+
+    if (expose_hidden_) {
+        const size_t hidden_size =
+            static_cast<size_t>(model_->config_.llm.hidden_size);
+        const size_t sequence =
+            static_cast<size_t>(conditional.sequence_length) +
+            static_cast<size_t>(unconditional.sequence_length);
+        output.hidden.resize(hidden_size * sequence);
+        ggml_backend_tensor_get(
+            hidden_,
+            output.hidden.data(),
+            0,
+            output.hidden.size() * sizeof(float));
+        output.hidden_tensor = hidden_;
+    }
 
     if (read_host_logits_) {
         const size_t logits_size = cells * static_cast<size_t>(vocab);
@@ -1556,7 +1176,14 @@ void OmniVoiceLM::DiffusionGraph::upload_audio_ids(
 }
 
 void OmniVoiceLM::DiffusionGraph::release() noexcept {
-    scheduler_.reset();
+    if (scheduler_ != nullptr) {
+        ggml_backend_sched_free(scheduler_);
+        scheduler_ = nullptr;
+    }
+    if (fallback_ != nullptr) {
+        ggml_backend_free(fallback_);
+        fallback_ = nullptr;
+    }
     if (context_ != nullptr) {
         ggml_free(context_);
         context_ = nullptr;
@@ -1589,6 +1216,8 @@ void OmniVoiceLM::DiffusionGraph::release() noexcept {
     unconditional_logits_ = nullptr;
     predictions_ = nullptr;
     confidence_ = nullptr;
+    hidden_ = nullptr;
+    expose_hidden_ = false;
     token_mask_ = nullptr;
 }
 
@@ -1596,15 +1225,16 @@ Status OmniVoiceLM::init_diffusion_graph(
     const OmniVoiceLmInput& conditional,
     const OmniVoiceLmInput& unconditional,
     bool read_host_logits,
+    bool expose_hidden,
     float guidance_scale) {
     release_diffusion_graph();
-    diffusion_read_host_logits_ = read_host_logits;
     auto graph = std::make_unique<DiffusionGraph>();
     Status status = graph->build(
         *this,
         conditional,
         unconditional,
         read_host_logits,
+        expose_hidden,
         guidance_scale);
     if (!status) {
         return status;
@@ -1626,7 +1256,6 @@ Status OmniVoiceLM::run_diffusion_graph(
 
 void OmniVoiceLM::release_diffusion_graph() noexcept {
     diffusion_graph_.reset();
-    diffusion_read_host_logits_ = true;
 }
 
 ggml_backend_t OmniVoiceLM::backend() const noexcept {

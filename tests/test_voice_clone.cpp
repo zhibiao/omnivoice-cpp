@@ -125,10 +125,10 @@ int main() {
     try {
         const Fixture fixture = read_fixture();
         const char* device = std::getenv("OMNIVOICE_TEST_DEVICE");
-        omnivoice::OmniVoiceContextParams params;
+        omnivoice::GGMLRuntimeParams params;
         params.device = device == nullptr ? "CPU" : device;
-        omnivoice::OmniVoiceContext context;
-        omnivoice::Status status = context.load(
+        omnivoice::GGMLRuntime runtime;
+        omnivoice::Status status = runtime.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params);
@@ -140,7 +140,7 @@ int main() {
             throw std::runtime_error(status.message());
         }
         omnivoice::OmniVoiceModel model;
-        status = model.load(context);
+        status = model.load(runtime);
         if (!status) {
             throw std::runtime_error(status.message());
         }
@@ -156,8 +156,6 @@ int main() {
         prompt.reference_codes.data = fixture.reference_codes;
 
         omnivoice::VoiceCloneRequest request;
-        request.voice_clone_prompt = &prompt;
-        request.reference_text = prompt.reference_text;
         request.target_text = "Hi.";
         request.language = "en";
         request.target_frames = fixture.target_frames;
@@ -179,7 +177,7 @@ int main() {
         };
 
         omnivoice::VoiceCloneOutput output;
-        status = model.generate_voice_clone(request, output);
+        status = model.generate_voice_clone(prompt, request, output);
         if (!status) {
             throw std::runtime_error(status.message());
         }

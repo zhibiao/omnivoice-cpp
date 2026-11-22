@@ -2,16 +2,15 @@
 
 #include "config.h"
 #include "diffusion_decoder/diffusion_decoder.h"
+#include "ggml_runtime.h"
 #include "higgs_tokenizer/decoder.h"
 #include "higgs_tokenizer/encoder.h"
 #include "prompt_builder.h"
 #include "qwen3_lm/qwen3_model.h"
 #include "status.h"
-#include "text_tokenizer.h"
+#include "text_tokenizer/text_tokenizer.h"
 #include "types.h"
 #include "voice_clone_prompt.h"
-
-#include "ggml-backend.h"
 
 #include <cstdint>
 #include <memory>
@@ -23,19 +22,18 @@ namespace omnivoice {
 
 class GGUFModel;
 
-struct VoiceClonePromptOptions {
+struct VoiceClonePromptRequest {
+    AudioBuffer reference_audio;
+    std::string reference_text;
+    std::string language = "None";
     bool denoise = true;
     bool preprocess_reference = true;
     LogCallback log;
 };
 
 struct VoiceCloneRequest {
-    AudioBuffer reference_audio;
-    std::string reference_text;
     std::string target_text;
     std::string language = "None";
-    const VoiceClonePrompt* voice_clone_prompt = nullptr;
-    bool preprocess_reference = true;
     bool denoise = true;
     float speed = 1.0f;
     int32_t target_frames = 0;
@@ -55,42 +53,6 @@ struct VoiceCloneOutput {
     std::vector<int32_t> counts_per_step;
 };
 
-struct OmniVoiceContextParams {
-    std::string device = "CPU";
-    LogCallback log;
-};
-
-class OmniVoiceContext {
-public:
-    OmniVoiceContext();
-    ~OmniVoiceContext();
-
-    OmniVoiceContext(const OmniVoiceContext&) = delete;
-    OmniVoiceContext& operator=(const OmniVoiceContext&) = delete;
-
-    Status init_runtime(const OmniVoiceContextParams& params);
-    Status load(
-        const std::string& lm_gguf_path,
-        const std::string& audio_tokenizer_gguf_path,
-        const OmniVoiceContextParams& params = {});
-
-    bool is_ready() const noexcept;
-    const OmniVoiceConfig& config() const noexcept;
-    ggml_backend_t backend() const noexcept;
-    const GGUFModel& lm_gguf() const;
-    const GGUFModel& audio_gguf() const;
-
-private:
-    void release() noexcept;
-
-    OmniVoiceConfig config_;
-    std::unique_ptr<GGUFModel> lm_gguf_;
-    std::unique_ptr<GGUFModel> audio_gguf_;
-    ggml_backend_t backend_ = nullptr;
-    bool runtime_ready_ = false;
-    bool gguf_ready_ = false;
-};
-
 class OmniVoiceModel {
 public:
     OmniVoiceModel();
@@ -99,27 +61,17 @@ public:
     OmniVoiceModel(const OmniVoiceModel&) = delete;
     OmniVoiceModel& operator=(const OmniVoiceModel&) = delete;
 
-    // The model borrows the context and is released before it.
+    // The model borrows the runtime and is released before it.
     Status load(
-        OmniVoiceContext& context,
+        GGMLRuntime& runtime,
         const LogCallback& log = {});
 
     Status create_prompt(
-        const AudioBuffer& reference_audio,
-        const std::string& reference_text,
-        const std::string& language,
-        const VoiceClonePromptOptions& options,
-        VoiceClonePrompt& prompt) const;
-
-    Status create_prompt(
-        const AudioBuffer& reference_audio,
-        const std::string& reference_text,
-        const std::string& language,
-        bool denoise,
-        bool preprocess_reference,
+        const VoiceClonePromptRequest& request,
         VoiceClonePrompt& prompt) const;
 
     Status generate_voice_clone(
+        const VoiceClonePrompt& prompt,
         const VoiceCloneRequest& request,
         VoiceCloneOutput& output) const;
 
@@ -134,7 +86,7 @@ public:
 private:
     void release() noexcept;
 
-    OmniVoiceContext* context_ = nullptr;
+    GGMLRuntime* runtime_ = nullptr;
     OmniVoiceConfig config_;
     TextTokenizer tokenizer_;
     std::unique_ptr<OmniVoiceLM> lm_;

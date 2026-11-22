@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -157,19 +158,67 @@ int main() {
             input.audio_mask.push_back(value != 0.0f ? 1 : 0);
         }
 
-        omnivoice::OmniVoiceLmOutput output;
-        status = model->forward(input, output);
+        omnivoice::OmniVoiceLmInput unconditional;
+        unconditional.sequence_length = input.target_frames;
+        unconditional.codebooks = input.codebooks;
+        unconditional.target_start = 0;
+        unconditional.target_frames = input.target_frames;
+        unconditional.audio_mask.assign(
+            static_cast<size_t>(input.target_frames),
+            1);
+        unconditional.input_ids.resize(
+            static_cast<size_t>(input.codebooks) *
+            static_cast<size_t>(input.target_frames));
+        for (int32_t codebook = 0; codebook < input.codebooks; ++codebook) {
+            std::copy(
+                input.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.sequence_length +
+                        input.target_start),
+                input.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.sequence_length +
+                        input.target_start +
+                        input.target_frames),
+                unconditional.input_ids.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        codebook * input.target_frames));
+        }
+
+        status = model->init_diffusion_graph(
+            input,
+            unconditional,
+            true,
+            true,
+            0.0f);
+        if (!status) {
+            model.reset();
+            ggml_backend_free(backend);
+            throw std::runtime_error(status.message());
+        }
+        omnivoice::OmniVoiceLmPackedOutput packed;
+        status = model->run_diffusion_graph(
+            input,
+            unconditional,
+            packed);
         if (!status) {
             model.reset();
             ggml_backend_free(backend);
             throw std::runtime_error(status.message());
         }
 
+        const size_t conditional_hidden_values =
+            static_cast<size_t>(config.llm.hidden_size) *
+            static_cast<size_t>(input.sequence_length);
+        const std::vector<float> conditional_hidden(
+            packed.hidden.begin(),
+            packed.hidden.begin() +
+                static_cast<std::ptrdiff_t>(conditional_hidden_values));
         const float hidden_error = max_abs_error(
-            output.hidden,
+            conditional_hidden,
             fixture.hidden_value);
         const float logits_error = max_abs_error(
-            output.target_logits,
+            packed.conditional_target_logits,
             fixture.logits);
         std::cout << "lm_hidden_max_error: " << hidden_error << '\n'
                   << "lm_logits_max_error: " << logits_error << '\n';

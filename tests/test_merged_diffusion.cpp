@@ -197,6 +197,7 @@ int main() {
             conditional,
             unconditional,
             true,
+            false,
             2.0f);
         if (!status) {
             throw std::runtime_error(status.message());
@@ -213,14 +214,6 @@ int main() {
         const float golden_error = maximum_error(
             packed.conditional_target_logits,
             fixture.target_logits);
-        omnivoice::OmniVoiceLmOutput unconditional_reference;
-        status = model->forward(unconditional, unconditional_reference);
-        if (!status) {
-            throw std::runtime_error(status.message());
-        }
-        const float unconditional_reference_error = maximum_error(
-            packed.unconditional_target_logits,
-            unconditional_reference.target_logits);
 
         std::vector<int32_t> all_masked(
             static_cast<size_t>(fixture.codebooks) *
@@ -309,6 +302,7 @@ int main() {
             conditional,
             unconditional,
             true,
+            false,
             0.0f);
         if (!status) {
             throw std::runtime_error(status.message());
@@ -340,10 +334,35 @@ int main() {
             unguided_reference.confidence);
         const bool unguided_predictions_match =
             unguided.predictions == unguided_reference.predictions;
+
+        // Both branches run the same LM math: feeding an identical
+        // sequence to each must produce identical target logits.
+        omnivoice::OmniVoiceLmInput mirrored = unconditional;
+        model->release_diffusion_graph();
+        status = model->init_diffusion_graph(
+            mirrored,
+            unconditional,
+            true,
+            false,
+            0.0f);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        omnivoice::OmniVoiceLmPackedOutput equivalent;
+        status = model->run_diffusion_graph(
+            mirrored,
+            unconditional,
+            equivalent);
+        if (!status) {
+            throw std::runtime_error(status.message());
+        }
+        model->release_diffusion_graph();
+        const float branch_equivalence_error = maximum_error(
+            equivalent.conditional_target_logits,
+            equivalent.unconditional_target_logits);
+
         std::cout << "merged_diffusion_golden_max_error: "
                   << golden_error << '\n'
-                  << "merged_diffusion_unconditional_max_error: "
-                  << unconditional_reference_error << '\n'
                   << "merged_diffusion_confidence_max_error: "
                   << confidence_error << '\n'
                   << "merged_diffusion_predictions_match: "
@@ -356,14 +375,14 @@ int main() {
                   << unguided_confidence_error << '\n'
                   << "merged_diffusion_unguided_predictions_match: "
                   << (unguided_predictions_match ? "true" : "false")
-                  << '\n';
+                  << '\n'
+                  << "merged_diffusion_branch_equivalence_error: "
+                  << branch_equivalence_error << '\n';
 
         model.reset();
         ggml_backend_free(backend);
         if (!std::isfinite(golden_error) ||
             golden_error > logits_tolerance ||
-            !std::isfinite(unconditional_reference_error) ||
-            unconditional_reference_error > logits_tolerance ||
             !std::isfinite(confidence_error) ||
             confidence_error > logits_tolerance ||
             !predictions_match ||
@@ -373,7 +392,9 @@ int main() {
             reverse_reuse_invariance_error > logits_tolerance ||
             !std::isfinite(unguided_confidence_error) ||
             unguided_confidence_error > logits_tolerance ||
-            !unguided_predictions_match) {
+            !unguided_predictions_match ||
+            !std::isfinite(branch_equivalence_error) ||
+            branch_equivalence_error > logits_tolerance) {
             return 1;
         }
         return 0;

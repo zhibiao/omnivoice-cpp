@@ -165,13 +165,6 @@ int main() {
         input.audio_mask.assign(
             fixture.audio_mask.begin(),
             fixture.audio_mask.end());
-        omnivoice::OmniVoiceLmOutput output;
-        status = model->forward(input, output);
-        if (!status) {
-            model.reset();
-            ggml_backend_free(backend);
-            throw std::runtime_error(status.message());
-        }
         omnivoice::OmniVoiceLmInput unconditional;
         unconditional.sequence_length = input.target_frames;
         unconditional.codebooks = input.codebooks;
@@ -202,6 +195,7 @@ int main() {
             input,
             unconditional,
             true,
+            true,
             2.0f);
         if (!status) {
             throw std::runtime_error(status.message());
@@ -214,15 +208,19 @@ int main() {
         if (!status) {
             throw std::runtime_error(status.message());
         }
+        const size_t conditional_hidden_values =
+            static_cast<size_t>(config.llm.hidden_size) *
+            static_cast<size_t>(input.sequence_length);
+        const std::vector<float> conditional_hidden(
+            packed.hidden.begin(),
+            packed.hidden.begin() +
+                static_cast<std::ptrdiff_t>(conditional_hidden_values));
         const float hidden_error = maximum_error(
-            output.hidden,
+            conditional_hidden,
             fixture.hidden);
         const float error = maximum_error(
-            output.target_logits,
-            fixture.target_logits);
-        const float packed_error = maximum_error(
             packed.conditional_target_logits,
-            output.target_logits);
+            fixture.target_logits);
         std::vector<int32_t> all_masked(
             static_cast<size_t>(input.codebooks) *
                 static_cast<size_t>(input.target_frames),
@@ -280,6 +278,7 @@ int main() {
             input,
             unconditional,
             true,
+            false,
             2.0f);
         if (!status) {
             throw std::runtime_error(status.message());
@@ -305,9 +304,7 @@ int main() {
                   << hidden_error << '\n'
                   << "prompt_lm_logits_max_error: "
                   << error << '\n';
-        std::cout << "prompt_lm_packed_logits_max_error: "
-                  << packed_error << '\n'
-                  << "prompt_lm_packed_confidence_max_error: "
+        std::cout << "prompt_lm_packed_confidence_max_error: "
                   << confidence_error << '\n'
                   << "prompt_lm_packed_predictions_match: "
                   << (predictions_match ? "true" : "false") << '\n'
@@ -320,8 +317,6 @@ int main() {
         model.reset();
         ggml_backend_free(backend);
         if (!std::isfinite(error) || error > logits_tolerance ||
-            !std::isfinite(packed_error) ||
-            packed_error > logits_tolerance ||
             !predictions_match ||
             !std::isfinite(confidence_error) ||
             confidence_error > logits_tolerance ||

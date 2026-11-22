@@ -1,6 +1,5 @@
 #include "qwen3_lm/qwen3_block.h"
 
-#include "backend_scheduler.h"
 #include "ggml-backend.h"
 
 #include <algorithm>
@@ -51,6 +50,57 @@ std::vector<float> read_f32(std::ifstream& file, size_t count) {
         throw std::runtime_error("failed to read fixture float data");
     }
     return values;
+}
+
+ggml_backend_sched_t create_test_scheduler(
+    ggml_backend_t primary,
+    int max_nodes,
+    ggml_backend_t& fallback) {
+    fallback = nullptr;
+    ggml_backend_dev_t primary_device =
+        ggml_backend_get_device(primary);
+    const bool primary_is_cpu =
+        primary_device != nullptr &&
+        ggml_backend_dev_type(primary_device) ==
+            GGML_BACKEND_DEVICE_TYPE_CPU;
+    ggml_backend_t backends[2] = {primary, nullptr};
+    ggml_backend_buffer_type_t buffer_types[2] = {
+        ggml_backend_get_default_buffer_type(primary),
+        nullptr};
+    int backend_count = 1;
+    if (!primary_is_cpu) {
+        fallback = ggml_backend_init_by_name("CPU", nullptr);
+        if (fallback == nullptr) {
+            return nullptr;
+        }
+        backends[1] = fallback;
+        buffer_types[1] =
+            ggml_backend_get_default_buffer_type(fallback);
+        backend_count = 2;
+    }
+    ggml_backend_sched_t scheduler = ggml_backend_sched_new(
+        backends,
+        buffer_types,
+        backend_count,
+        max_nodes,
+        false,
+        false);
+    if (scheduler == nullptr && fallback != nullptr) {
+        ggml_backend_free(fallback);
+        fallback = nullptr;
+    }
+    return scheduler;
+}
+
+void free_test_scheduler(
+    ggml_backend_sched_t scheduler,
+    ggml_backend_t fallback) {
+    if (scheduler != nullptr) {
+        ggml_backend_sched_free(scheduler);
+    }
+    if (fallback != nullptr) {
+        ggml_backend_free(fallback);
+    }
 }
 
 Fixture read_fixture() {
@@ -200,15 +250,16 @@ std::vector<float> run_single_block(
         false);
     ggml_build_forward_expand(graph, output);
 
-    omnivoice::BackendScheduler scheduler;
-    omnivoice::Status status = scheduler.create(backend, 4096);
-    if (!status) {
+    ggml_backend_t fallback = nullptr;
+    ggml_backend_sched_t scheduler =
+        create_test_scheduler(backend, 4096, fallback);
+    if (scheduler == nullptr) {
         ggml_free(graph_context);
-        throw std::runtime_error(status.message());
+        throw std::runtime_error("failed to create backend scheduler");
     }
-    ggml_backend_sched_reset(scheduler.get());
-    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
-        scheduler.reset();
+    ggml_backend_sched_reset(scheduler);
+    if (!ggml_backend_sched_alloc_graph(scheduler, graph)) {
+        free_test_scheduler(scheduler, fallback);
         ggml_free(graph_context);
         throw std::runtime_error("failed to allocate single block graph");
     }
@@ -227,9 +278,9 @@ std::vector<float> run_single_block(
         position_values.data(),
         0,
         position_values.size() * sizeof(int32_t));
-    if (ggml_backend_sched_graph_compute(scheduler.get(), graph) !=
+    if (ggml_backend_sched_graph_compute(scheduler, graph) !=
         GGML_STATUS_SUCCESS) {
-        scheduler.reset();
+        free_test_scheduler(scheduler, fallback);
         ggml_free(graph_context);
         throw std::runtime_error("single Qwen3 block graph failed");
     }
@@ -241,7 +292,7 @@ std::vector<float> run_single_block(
         output_values.data(),
         0,
         output_values.size() * sizeof(float));
-    scheduler.reset();
+    free_test_scheduler(scheduler, fallback);
     ggml_free(graph_context);
     return output_values;
 }
@@ -296,15 +347,16 @@ std::vector<float> run_packed_block(
         false);
     ggml_build_forward_expand(graph, output);
 
-    omnivoice::BackendScheduler scheduler;
-    omnivoice::Status status = scheduler.create(backend, 8192);
-    if (!status) {
+    ggml_backend_t fallback = nullptr;
+    ggml_backend_sched_t scheduler =
+        create_test_scheduler(backend, 8192, fallback);
+    if (scheduler == nullptr) {
         ggml_free(graph_context);
-        throw std::runtime_error(status.message());
+        throw std::runtime_error("failed to create backend scheduler");
     }
-    ggml_backend_sched_reset(scheduler.get());
-    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
-        scheduler.reset();
+    ggml_backend_sched_reset(scheduler);
+    if (!ggml_backend_sched_alloc_graph(scheduler, graph)) {
+        free_test_scheduler(scheduler, fallback);
         ggml_free(graph_context);
         throw std::runtime_error("failed to allocate packed block graph");
     }
@@ -335,9 +387,9 @@ std::vector<float> run_packed_block(
         second_position_values.data(),
         0,
         second_position_values.size() * sizeof(int32_t));
-    if (ggml_backend_sched_graph_compute(scheduler.get(), graph) !=
+    if (ggml_backend_sched_graph_compute(scheduler, graph) !=
         GGML_STATUS_SUCCESS) {
-        scheduler.reset();
+        free_test_scheduler(scheduler, fallback);
         ggml_free(graph_context);
         throw std::runtime_error("packed Qwen3 block graph failed");
     }
@@ -349,7 +401,7 @@ std::vector<float> run_packed_block(
         output_values.data(),
         0,
         output_values.size() * sizeof(float));
-    scheduler.reset();
+    free_test_scheduler(scheduler, fallback);
     ggml_free(graph_context);
     return output_values;
 }
@@ -547,14 +599,15 @@ int main() {
             false);
         ggml_build_forward_expand(graph, output);
 
-        omnivoice::BackendScheduler scheduler;
-        omnivoice::Status scheduler_status =
-            scheduler.create(backend, 4096);
-        if (!scheduler_status) {
-            throw std::runtime_error(scheduler_status.message());
+        ggml_backend_t fallback = nullptr;
+        ggml_backend_sched_t scheduler =
+            create_test_scheduler(backend, 4096, fallback);
+        if (scheduler == nullptr) {
+            throw std::runtime_error("failed to create backend scheduler");
         }
-        ggml_backend_sched_reset(scheduler.get());
-        if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph)) {
+        ggml_backend_sched_reset(scheduler);
+        if (!ggml_backend_sched_alloc_graph(scheduler, graph)) {
+            free_test_scheduler(scheduler, fallback);
             throw std::runtime_error("failed to allocate graph");
         }
 
@@ -574,7 +627,7 @@ int main() {
             mask_half.data(),
             0,
             mask_half.size() * sizeof(ggml_fp16_t));
-        if (ggml_backend_sched_graph_compute(scheduler.get(), graph) !=
+        if (ggml_backend_sched_graph_compute(scheduler, graph) !=
             GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 block graph failed");
         }
@@ -593,6 +646,7 @@ int main() {
         }
         if (!std::isfinite(max_error) || max_error > 1.5e-3f) {
             std::cerr << "Qwen3 block max error: " << max_error << '\n';
+            free_test_scheduler(scheduler, fallback);
             ggml_free(graph_context);
             ggml_backend_buffer_free(weight_buffer);
             ggml_free(weight_context);
@@ -601,7 +655,7 @@ int main() {
         }
         std::cout << "qwen3_block_max_error: " << max_error << '\n';
 
-        scheduler.reset();
+        free_test_scheduler(scheduler, fallback);
         ggml_free(graph_context);
         graph_context = nullptr;
 
