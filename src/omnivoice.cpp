@@ -3,7 +3,6 @@
 #include "audio_kit.h"
 #include "diffusion_decoder/diffusion_decoder.h"
 #include "duration_estimator.h"
-#include "ggml_model.h"
 #include "ggml_session.h"
 #include "gguf_model.h"
 #include "higgs_tokenizer/decoder.h"
@@ -49,7 +48,8 @@ std::string elapsed_milliseconds(Clock::time_point start) {
 
 struct OmniVoiceModel::Impl {
     GGMLSession session;
-    GGMLModel model;
+    std::unique_ptr<GGUFModel> lm_gguf;
+    std::unique_ptr<GGUFModel> audio_gguf;
     OmniVoiceConfig config;
     TextTokenizer tokenizer;
     std::unique_ptr<OmniVoiceLM> lm;
@@ -88,20 +88,63 @@ Status OmniVoiceModel::load(
         return status;
     }
 
-    GGMLModelParams model_params;
-    model_params.lm_gguf_path = lm_gguf_path;
-    model_params.audio_tokenizer_gguf_path =
-        audio_tokenizer_gguf_path;
-    model_params.log = params.log;
-    status = impl_->model.load(model_params);
+    log_message(
+        params.log,
+        "loading LM GGUF: " + lm_gguf_path);
+    std::unique_ptr<GGUFModel> lm_gguf;
+    status = GGUFModel::open(lm_gguf_path, lm_gguf);
     if (!status) {
         reset_impl();
         return status;
     }
+    log_message(
+        params.log,
+        "LM GGUF ready: " +
+            std::to_string(lm_gguf->tensor_count()) + " tensors");
+
+    log_message(
+        params.log,
+        "loading audio tokenizer GGUF: " +
+            audio_tokenizer_gguf_path);
+    std::unique_ptr<GGUFModel> audio_gguf;
+    status = GGUFModel::open(
+        audio_tokenizer_gguf_path,
+        audio_gguf);
+    if (!status) {
+        reset_impl();
+        return status;
+    }
+    log_message(
+        params.log,
+        "audio tokenizer GGUF ready: " +
+            std::to_string(audio_gguf->tensor_count()) + " tensors");
+
+    log_message(params.log, "loading OmniVoice configuration");
+    OmniVoiceConfig config;
+    status = load_omnivoice_config(*lm_gguf, *audio_gguf, config);
+    if (!status) {
+        reset_impl();
+        return status;
+    }
+    log_message(
+        params.log,
+        "configuration ready: LM hidden=" +
+            std::to_string(config.lm.llm.hidden_size) +
+            ", layers=" +
+            std::to_string(config.lm.llm.num_hidden_layers) +
+            ", audio=" +
+            std::to_string(config.audio_tokenizer.frame_rate) +
+            " Hz x " +
+            std::to_string(config.lm.num_audio_codebooks) +
+            " codebooks");
+
+    impl_->lm_gguf = std::move(lm_gguf);
+    impl_->audio_gguf = std::move(audio_gguf);
+    impl_->config = std::move(config);
 
     log_message(params.log, "loading text tokenizer");
     TextTokenizer tokenizer;
-    status = tokenizer.load(impl_->model.config().text_tokenizer);
+    status = tokenizer.load(impl_->config.text_tokenizer);
     if (!status) {
         reset_impl();
         return status;
@@ -114,14 +157,14 @@ Status OmniVoiceModel::load(
     log_message(
         params.log,
         "loading OmniVoice LM (" +
-            std::to_string(impl_->model.lm_gguf().tensor_count()) +
+            std::to_string(impl_->lm_gguf->tensor_count()) +
             " tensors)");
     const auto lm_start = Clock::now();
     std::unique_ptr<OmniVoiceLM> lm =
         std::make_unique<OmniVoiceLM>();
     status = lm->load(
-        impl_->model.config().lm,
-        impl_->model.lm_gguf(),
+        impl_->config.lm,
+        *impl_->lm_gguf,
         impl_->session.backend());
     if (!status) {
         reset_impl();
@@ -135,14 +178,14 @@ Status OmniVoiceModel::load(
     log_message(
         params.log,
         "loading Higgs audio encoder (" +
-            std::to_string(impl_->model.audio_gguf().tensor_count()) +
+            std::to_string(impl_->audio_gguf->tensor_count()) +
             " tensors)");
     const auto encoder_start = Clock::now();
     std::unique_ptr<HiggsAudioEncoder> encoder =
         std::make_unique<HiggsAudioEncoder>();
     status = encoder->load(
-        impl_->model.config().audio_tokenizer,
-        impl_->model.audio_gguf(),
+        impl_->config.audio_tokenizer,
+        *impl_->audio_gguf,
         impl_->session.backend());
     if (!status) {
         reset_impl();
@@ -158,8 +201,8 @@ Status OmniVoiceModel::load(
     std::unique_ptr<HiggsAudioDecoder> decoder =
         std::make_unique<HiggsAudioDecoder>();
     status = decoder->load(
-        impl_->model.config().audio_tokenizer,
-        impl_->model.audio_gguf(),
+        impl_->config.audio_tokenizer,
+        *impl_->audio_gguf,
         impl_->session.backend());
     if (!status) {
         reset_impl();
@@ -170,7 +213,6 @@ Status OmniVoiceModel::load(
         "Higgs audio decoder ready in " +
             elapsed_milliseconds(decoder_start) + " ms");
 
-    impl_->config = impl_->model.config();
     impl_->tokenizer = std::move(tokenizer);
     impl_->lm = std::move(lm);
     impl_->encoder = std::move(encoder);

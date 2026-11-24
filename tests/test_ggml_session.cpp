@@ -1,6 +1,5 @@
 #include "omnivoice.h"
 
-#include "ggml_model.h"
 #include "ggml_session.h"
 
 #include <cstdlib>
@@ -35,10 +34,10 @@ int main() {
         return 1;
     }
 
-    omnivoice::GGMLModel invalid_model;
-    omnivoice::GGMLModelParams invalid_model_params;
-    if (invalid_model.load(invalid_model_params) ||
-        invalid_model.is_ready()) {
+    omnivoice::OmniVoiceModel empty_paths_model;
+    omnivoice::OmniVoiceModelParams empty_paths_params;
+    if (empty_paths_model.load("", "", empty_paths_params) ||
+        empty_paths_model.is_loaded()) {
         std::cerr << "empty GGUF paths must fail\n";
         return 1;
     }
@@ -75,21 +74,6 @@ int main() {
             return 77;
         }
         std::cerr << status.message() << '\n';
-        return 1;
-    }
-
-    omnivoice::GGMLModel model_resources;
-    omnivoice::GGMLModelParams model_params;
-    model_params.lm_gguf_path = OMNIVOICE_LM_GGUF;
-    model_params.audio_tokenizer_gguf_path = OMNIVOICE_AUDIO_GGUF;
-    model_params.log = params.log;
-    status = model_resources.load(model_params);
-    if (!status || !model_resources.is_ready()) {
-        std::cerr << status.message() << '\n';
-        return 1;
-    }
-    if (model_resources.load(model_params)) {
-        std::cerr << "duplicate model load must fail\n";
         return 1;
     }
 
