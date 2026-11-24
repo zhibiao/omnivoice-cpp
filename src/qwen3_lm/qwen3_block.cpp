@@ -251,7 +251,9 @@ ggml_tensor* attention(
         0.0f,
         0.0f);
     ggml_flash_attn_ext_set_prec(output, GGML_PREC_F32);
-    output = ggml_cont_2d(
+    // The flash attention result is a freshly allocated contiguous tensor, so a
+    // reshape aliases it instead of paying for a copy.
+    output = ggml_reshape_2d(
         context,
         output,
         query_dim,
