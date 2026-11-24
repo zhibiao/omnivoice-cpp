@@ -34,7 +34,6 @@
 
 namespace {
 
-constexpr int32_t DEFAULT_SAMPLE_RATE = 24000;
 using Clock = std::chrono::steady_clock;
 
 std::string elapsed_text(Clock::time_point start) {
@@ -313,7 +312,6 @@ void print_usage() {
            "[--num-step N] [--seed N] "
            "[--denoise [true|false]] [--no-denoise] "
            "[--prompt-output FILE.ovprompt]\n"
-        << "  omnivoice-cli --write-test-tone OUTPUT.wav\n"
         << "  omnivoice-cli --help\n\n"
         << "Only Voice Clone is implemented. Reference audio must be "
            "24 kHz mono WAV or MP3.\n"
@@ -393,17 +391,12 @@ int show_audio_info(const std::string& path) {
 
 omnivoice::Status load_model(
     const Arguments& args,
-    const omnivoice::GGMLRuntimeParams& params,
-    omnivoice::GGMLRuntime& runtime,
+    const omnivoice::OmniVoiceModelParams& params,
     omnivoice::OmniVoiceModel& model) {
-    omnivoice::Status status = runtime.load(
+    return model.load(
         args.model,
         args.audio_tokenizer,
         params);
-    if (!status) {
-        return status;
-    }
-    return model.load(runtime, params.log);
 }
 
 int create_prompt_command(const Arguments& args) {
@@ -420,17 +413,15 @@ int create_prompt_command(const Arguments& args) {
 
     const auto command_start = Clock::now();
     const omnivoice::LogCallback log = make_logger(command_start);
-    omnivoice::GGMLRuntimeParams params;
+    omnivoice::OmniVoiceModelParams params;
     params.device = args.device;
     params.log = log;
-    omnivoice::GGMLRuntime runtime;
     omnivoice::OmniVoiceModel model;
     log("loading models");
     const auto load_start = Clock::now();
     omnivoice::Status status = load_model(
         args,
         params,
-        runtime,
         model);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
@@ -505,17 +496,15 @@ int clone_command(const Arguments& args) {
 
     const auto command_start = Clock::now();
     const omnivoice::LogCallback log = make_logger(command_start);
-    omnivoice::GGMLRuntimeParams params;
+    omnivoice::OmniVoiceModelParams params;
     params.device = args.device;
     params.log = log;
-    omnivoice::GGMLRuntime runtime;
     omnivoice::OmniVoiceModel model;
     log("loading models");
     const auto load_start = Clock::now();
     omnivoice::Status status = load_model(
         args,
         params,
-        runtime,
         model);
     if (!status) {
         std::cerr << "error: " << status.message() << '\n';
@@ -637,29 +626,6 @@ int clone_command(const Arguments& args) {
     return 0;
 }
 
-omnivoice::Status write_test_tone(const std::string& path) {
-    if (path.empty()) {
-        return omnivoice::Status::error(
-            "test tone output path is empty");
-    }
-
-    constexpr int32_t SAMPLE_COUNT = DEFAULT_SAMPLE_RATE / 2;
-    constexpr double PI = 3.14159265358979323846;
-
-    omnivoice::AudioBuffer audio;
-    audio.sample_rate = DEFAULT_SAMPLE_RATE;
-    audio.channels = 1;
-    audio.samples.resize(SAMPLE_COUNT);
-    for (int32_t index = 0; index < SAMPLE_COUNT; ++index) {
-        const double phase =
-            2.0 * PI * 440.0 * static_cast<double>(index) /
-            static_cast<double>(DEFAULT_SAMPLE_RATE);
-        audio.samples[static_cast<size_t>(index)] =
-            0.2f * static_cast<float>(std::sin(phase));
-    }
-    return omnivoice::write_wav(path, audio);
-}
-
 } // namespace
 
 int run_cli(int argc, char** argv) {
@@ -687,19 +653,6 @@ int run_cli(int argc, char** argv) {
             return 2;
         }
         return show_audio_info(argv[2]);
-    }
-    if (option == "--write-test-tone") {
-        if (argc != 3) {
-            std::cerr << "--write-test-tone requires an output path\n";
-            return 2;
-        }
-        const omnivoice::Status status = write_test_tone(argv[2]);
-        if (!status) {
-            std::cerr << "error: " << status.message() << '\n';
-            return 1;
-        }
-        std::cout << "wrote test tone: " << argv[2] << '\n';
-        return 0;
     }
     if (option != "--create-prompt" && option != "--clone") {
         std::cerr << "unknown option: " << option << "\n\n";

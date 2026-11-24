@@ -83,8 +83,9 @@ add_library(omnivoice-core STATIC
     src/diffusion_decoder/mask_schedule.cpp
     src/diffusion_decoder/token_selector.cpp
     src/duration_estimator.cpp
+    src/ggml_model.cpp
+    src/ggml_session.cpp
     src/gguf_model.cpp
-    src/ggml_runtime.cpp
     src/higgs_tokenizer/decoder.cpp
     src/higgs_tokenizer/encoder.cpp
     src/omnivoice.cpp

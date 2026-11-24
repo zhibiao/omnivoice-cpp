@@ -125,10 +125,10 @@ int main() {
     try {
         const Fixture fixture = read_fixture();
         const char* device = std::getenv("OMNIVOICE_TEST_DEVICE");
-        omnivoice::GGMLRuntimeParams params;
+        omnivoice::OmniVoiceModelParams params;
         params.device = device == nullptr ? "CPU" : device;
-        omnivoice::GGMLRuntime runtime;
-        omnivoice::Status status = runtime.load(
+        omnivoice::OmniVoiceModel model;
+        omnivoice::Status status = model.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params);
@@ -137,11 +137,6 @@ int main() {
                 std::cerr << "requested backend unavailable; skipping\n";
                 return 77;
             }
-            throw std::runtime_error(status.message());
-        }
-        omnivoice::OmniVoiceModel model;
-        status = model.load(runtime);
-        if (!status) {
             throw std::runtime_error(status.message());
         }
 

@@ -1,14 +1,8 @@
 #pragma once
 
 #include "config.h"
-#include "diffusion_decoder/diffusion_decoder.h"
-#include "ggml_runtime.h"
-#include "higgs_tokenizer/decoder.h"
-#include "higgs_tokenizer/encoder.h"
 #include "prompt_builder.h"
-#include "qwen3_lm/qwen3_model.h"
 #include "status.h"
-#include "text_tokenizer/text_tokenizer.h"
 #include "types.h"
 #include "voice_clone_prompt.h"
 
@@ -19,8 +13,6 @@
 #include <vector>
 
 namespace omnivoice {
-
-class GGUFModel;
 
 struct VoiceClonePromptRequest {
     AudioBuffer reference_audio;
@@ -53,6 +45,11 @@ struct VoiceCloneOutput {
     std::vector<int32_t> counts_per_step;
 };
 
+struct OmniVoiceModelParams {
+    std::string device = "CPU";
+    LogCallback log;
+};
+
 class OmniVoiceModel {
 public:
     OmniVoiceModel();
@@ -61,10 +58,10 @@ public:
     OmniVoiceModel(const OmniVoiceModel&) = delete;
     OmniVoiceModel& operator=(const OmniVoiceModel&) = delete;
 
-    // The model borrows the runtime and is released before it.
     Status load(
-        GGMLRuntime& runtime,
-        const LogCallback& log = {});
+        const std::string& lm_gguf_path,
+        const std::string& audio_tokenizer_gguf_path,
+        const OmniVoiceModelParams& params = {});
 
     Status create_prompt(
         const VoiceClonePromptRequest& request,
@@ -84,15 +81,8 @@ public:
     bool is_loaded() const noexcept;
 
 private:
-    void release() noexcept;
-
-    GGMLRuntime* runtime_ = nullptr;
-    OmniVoiceConfig config_;
-    TextTokenizer tokenizer_;
-    std::unique_ptr<OmniVoiceLM> lm_;
-    std::unique_ptr<HiggsAudioEncoder> encoder_;
-    std::unique_ptr<HiggsAudioDecoder> decoder_;
-    bool loaded_ = false;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace omnivoice

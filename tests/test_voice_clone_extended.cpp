@@ -99,21 +99,16 @@ int main() {
 
     try {
         const PromptFixture fixture = read_prompt_fixture();
-        omnivoice::GGMLRuntimeParams params;
+        omnivoice::OmniVoiceModelParams params;
         params.device = "CUDA0";
-        omnivoice::GGMLRuntime runtime;
-        omnivoice::Status status = runtime.load(
+        omnivoice::OmniVoiceModel model;
+        omnivoice::Status status = model.load(
             OMNIVOICE_LM_GGUF,
             OMNIVOICE_AUDIO_GGUF,
             params);
         if (!status) {
             std::cerr << "CUDA backend unavailable; skipping\n";
             return 77;
-        }
-        omnivoice::OmniVoiceModel model;
-        status = model.load(runtime);
-        if (!status) {
-            throw std::runtime_error(status.message());
         }
 
         omnivoice::VoiceClonePrompt prompt;

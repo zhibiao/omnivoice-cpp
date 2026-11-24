@@ -151,19 +151,19 @@ set_tests_properties(
     LABELS "portable"
 )
 
-omnivoice_add_test(test_ggml_runtime omnivoice_ggml_runtime)
-target_compile_definitions(test_ggml_runtime PRIVATE
+omnivoice_add_test(test_ggml_session omnivoice_ggml_session)
+target_compile_definitions(test_ggml_session PRIVATE
     OMNIVOICE_LM_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-lm-f32.gguf"
     OMNIVOICE_AUDIO_GGUF="${OMNIVOICE_MODEL_DIR}/omnivoice-tokenizer-f32.gguf"
 )
-set_tests_properties(omnivoice_ggml_runtime PROPERTIES
+set_tests_properties(omnivoice_ggml_session PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 120
 )
 if(OMNIVOICE_ENABLE_CUDA)
     omnivoice_add_cuda_test(
-        omnivoice_ggml_runtime_cuda
-        test_ggml_runtime
+        omnivoice_ggml_session_cuda
+        test_ggml_session
     )
 endif()
 
@@ -301,14 +301,4 @@ set_tests_properties(
     omnivoice_cli_prompt_requires_args
     PROPERTIES
     LABELS "portable;cli"
-)
-
-omnivoice_add_test(test_cli_tone omnivoice_cli_tone)
-target_compile_definitions(test_cli_tone PRIVATE
-    OMNIVOICE_CLI_PATH="$<TARGET_FILE:omnivoice-cli>"
-)
-add_dependencies(test_cli_tone omnivoice-cli)
-set_tests_properties(omnivoice_cli_tone PROPERTIES
-    LABELS "portable;cli"
-    TIMEOUT 60
 )

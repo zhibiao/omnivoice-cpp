@@ -1,9 +1,16 @@
 #include "omnivoice.h"
 
 #include "audio_kit.h"
+#include "diffusion_decoder/diffusion_decoder.h"
 #include "duration_estimator.h"
+#include "ggml_model.h"
+#include "ggml_session.h"
 #include "gguf_model.h"
+#include "higgs_tokenizer/decoder.h"
+#include "higgs_tokenizer/encoder.h"
+#include "qwen3_lm/qwen3_model.h"
 #include "text_tokenizer/text_chunker.h"
+#include "text_tokenizer/text_tokenizer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -40,126 +47,154 @@ std::string elapsed_milliseconds(Clock::time_point start) {
 
 } // namespace
 
-OmniVoiceModel::OmniVoiceModel() = default;
+struct OmniVoiceModel::Impl {
+    GGMLSession session;
+    GGMLModel model;
+    OmniVoiceConfig config;
+    TextTokenizer tokenizer;
+    std::unique_ptr<OmniVoiceLM> lm;
+    std::unique_ptr<HiggsAudioEncoder> encoder;
+    std::unique_ptr<HiggsAudioDecoder> decoder;
+    bool loaded = false;
+};
 
-OmniVoiceModel::~OmniVoiceModel() {
-    release();
+OmniVoiceModel::OmniVoiceModel()
+    : impl_(std::make_unique<Impl>()) {
 }
 
-void OmniVoiceModel::release() noexcept {
-    loaded_ = false;
-    decoder_.reset();
-    encoder_.reset();
-    lm_.reset();
-    tokenizer_ = {};
-    config_ = {};
-    runtime_ = nullptr;
-}
+OmniVoiceModel::~OmniVoiceModel() = default;
 
 Status OmniVoiceModel::load(
-    GGMLRuntime& runtime,
-    const LogCallback& log) {
-    if (loaded_) {
+    const std::string& lm_gguf_path,
+    const std::string& audio_tokenizer_gguf_path,
+    const OmniVoiceModelParams& params) {
+    if (impl_->loaded) {
         return Status::error("OmniVoiceModel is already loaded");
     }
-    if (!runtime.is_ready()) {
-        return Status::error("GGML runtime is not ready");
+    if (lm_gguf_path.empty() ||
+        audio_tokenizer_gguf_path.empty()) {
+        return Status::error("OmniVoice model paths must not be empty");
     }
 
+    const auto reset_impl = [&]() {
+        impl_ = std::make_unique<Impl>();
+    };
     const auto load_start = Clock::now();
-    log_message(log, "loading text tokenizer");
-    TextTokenizer tokenizer;
-    Status status = tokenizer.load(runtime.config().text_tokenizer);
+    GGMLSessionParams session_params;
+    session_params.device = params.device;
+    session_params.log = params.log;
+    Status status = impl_->session.init(session_params);
     if (!status) {
         return status;
     }
+
+    GGMLModelParams model_params;
+    model_params.lm_gguf_path = lm_gguf_path;
+    model_params.audio_tokenizer_gguf_path =
+        audio_tokenizer_gguf_path;
+    model_params.log = params.log;
+    status = impl_->model.load(model_params);
+    if (!status) {
+        reset_impl();
+        return status;
+    }
+
+    log_message(params.log, "loading text tokenizer");
+    TextTokenizer tokenizer;
+    status = tokenizer.load(impl_->model.config().text_tokenizer);
+    if (!status) {
+        reset_impl();
+        return status;
+    }
     log_message(
-        log,
+        params.log,
         "text tokenizer ready in " +
             elapsed_milliseconds(load_start) + " ms");
 
     log_message(
-        log,
+        params.log,
         "loading OmniVoice LM (" +
-            std::to_string(runtime.lm_gguf().tensor_count()) +
+            std::to_string(impl_->model.lm_gguf().tensor_count()) +
             " tensors)");
     const auto lm_start = Clock::now();
     std::unique_ptr<OmniVoiceLM> lm =
         std::make_unique<OmniVoiceLM>();
     status = lm->load(
-        runtime.config().lm,
-        runtime.lm_gguf(),
-        runtime.backend());
+        impl_->model.config().lm,
+        impl_->model.lm_gguf(),
+        impl_->session.backend());
     if (!status) {
+        reset_impl();
         return status;
     }
     log_message(
-        log,
+        params.log,
         "OmniVoice LM ready in " +
             elapsed_milliseconds(lm_start) + " ms");
 
     log_message(
-        log,
+        params.log,
         "loading Higgs audio encoder (" +
-            std::to_string(runtime.audio_gguf().tensor_count()) +
+            std::to_string(impl_->model.audio_gguf().tensor_count()) +
             " tensors)");
     const auto encoder_start = Clock::now();
     std::unique_ptr<HiggsAudioEncoder> encoder =
         std::make_unique<HiggsAudioEncoder>();
     status = encoder->load(
-        runtime.config().audio_tokenizer,
-        runtime.audio_gguf(),
-        runtime.backend());
+        impl_->model.config().audio_tokenizer,
+        impl_->model.audio_gguf(),
+        impl_->session.backend());
     if (!status) {
+        reset_impl();
         return status;
     }
     log_message(
-        log,
+        params.log,
         "Higgs audio encoder ready in " +
             elapsed_milliseconds(encoder_start) + " ms");
 
-    log_message(log, "loading Higgs audio decoder");
+    log_message(params.log, "loading Higgs audio decoder");
     const auto decoder_start = Clock::now();
     std::unique_ptr<HiggsAudioDecoder> decoder =
         std::make_unique<HiggsAudioDecoder>();
     status = decoder->load(
-        runtime.config().audio_tokenizer,
-        runtime.audio_gguf(),
-        runtime.backend());
+        impl_->model.config().audio_tokenizer,
+        impl_->model.audio_gguf(),
+        impl_->session.backend());
     if (!status) {
+        reset_impl();
         return status;
     }
     log_message(
-        log,
+        params.log,
         "Higgs audio decoder ready in " +
             elapsed_milliseconds(decoder_start) + " ms");
 
-    runtime_ = &runtime;
-    config_ = runtime.config();
-    tokenizer_ = std::move(tokenizer);
-    lm_ = std::move(lm);
-    encoder_ = std::move(encoder);
-    decoder_ = std::move(decoder);
-    loaded_ = true;
+    impl_->config = impl_->model.config();
+    impl_->tokenizer = std::move(tokenizer);
+    impl_->lm = std::move(lm);
+    impl_->encoder = std::move(encoder);
+    impl_->decoder = std::move(decoder);
+    impl_->loaded = true;
     log_message(
-        log,
+        params.log,
         "OmniVoice model ready in " +
             elapsed_milliseconds(load_start) + " ms");
     return Status::ok();
 }
 
 bool OmniVoiceModel::is_loaded() const noexcept {
-    return loaded_;
+    return impl_->loaded;
 }
 
 VoiceCloneConfig OmniVoiceModel::generation_defaults() const noexcept {
-    return config_.voice_clone;
+    return impl_->config.voice_clone;
 }
 
 Status OmniVoiceModel::create_prompt(
     const VoiceClonePromptRequest& request,
     VoiceClonePrompt& prompt) const {
-    if (!loaded_) {
+    if (!impl_->loaded) {
         return Status::error("OmniVoice model is not loaded");
     }
     log_message(
@@ -173,7 +208,7 @@ Status OmniVoiceModel::create_prompt(
             ", denoise=" + (request.denoise ? "on" : "off"));
     const auto encode_start = Clock::now();
     Status status = create_voice_clone_prompt(
-        *encoder_,
+        *impl_->encoder,
         request.reference_audio,
         request.reference_text,
         request.language,
@@ -197,7 +232,7 @@ Status OmniVoiceModel::decode_codes(
     AudioBuffer& audio,
     const LogCallback& log) const {
     audio = {};
-    if (!loaded_) {
+    if (!impl_->loaded) {
         return Status::error("OmniVoice model is not loaded");
     }
     log_message(
@@ -205,7 +240,7 @@ Status OmniVoiceModel::decode_codes(
         "decoding audio: " + std::to_string(codes.codebooks) +
             " x " + std::to_string(codes.frames) + " codes");
     const auto decode_start = Clock::now();
-    Status status = decoder_->decode(codes, audio);
+    Status status = impl_->decoder->decode(codes, audio);
     if (status) {
         log_message(
             log,
@@ -223,7 +258,7 @@ Status OmniVoiceModel::generate_voice_clone(
     VoiceCloneOutput& output) const {
     const auto clone_start = Clock::now();
     output = {};
-    if (!loaded_) {
+    if (!impl_->loaded) {
         return Status::error("OmniVoice model is not loaded");
     }
     if (request.target_text.empty()) {
@@ -258,13 +293,15 @@ Status OmniVoiceModel::generate_voice_clone(
             1,
             static_cast<int32_t>(
                 request.duration_seconds *
-                static_cast<float>(config_.audio_tokenizer.frame_rate)));
+                static_cast<float>(
+                    impl_->config.audio_tokenizer.frame_rate)));
         log_message(
             request.log,
             "target frames: " + std::to_string(target_frames) +
                 " (" + format_number(request.duration_seconds) +
                 " s at " +
-                std::to_string(config_.audio_tokenizer.frame_rate) +
+                std::to_string(
+                    impl_->config.audio_tokenizer.frame_rate) +
                 " Hz)");
     }
     if (target_frames <= 0) {
@@ -284,7 +321,8 @@ Status OmniVoiceModel::generate_voice_clone(
                 std::to_string(target_frames) + " (" +
                 format_number(
                     static_cast<double>(target_frames) /
-                    static_cast<double>(config_.audio_tokenizer.frame_rate)) +
+                    static_cast<double>(
+                        impl_->config.audio_tokenizer.frame_rate)) +
                 " s)");
     } else if (request.duration_seconds <= 0.0f) {
         log_message(
@@ -292,12 +330,14 @@ Status OmniVoiceModel::generate_voice_clone(
             "target frames: " + std::to_string(target_frames) + " (" +
                 format_number(
                     static_cast<double>(target_frames) /
-                    static_cast<double>(config_.audio_tokenizer.frame_rate)) +
+                    static_cast<double>(
+                        impl_->config.audio_tokenizer.frame_rate)) +
                 " s)");
     }
 
     const VoiceCloneConfig options =
-        request.generation_config.value_or(config_.voice_clone);
+        request.generation_config.value_or(
+            impl_->config.voice_clone);
     log_message(
         request.log,
         "generation: steps=" + std::to_string(options.num_step) +
@@ -330,8 +370,8 @@ Status OmniVoiceModel::generate_voice_clone(
         prompt_input.target_frames = frames;
         prompt_input.denoise = request.denoise;
         Status local_status = build_voice_clone_prompt(
-            tokenizer_,
-            config_,
+            impl_->tokenizer,
+            impl_->config,
             prompt_input,
             plan);
         if (!local_status) {
@@ -354,13 +394,13 @@ Status OmniVoiceModel::generate_voice_clone(
         DiffusionDecodeResult decoded;
         local_status = run_diffusion_decoder(
             plan,
-            config_.lm,
+            impl_->config.lm,
             options,
             seed,
-            *lm_,
+            *impl_->lm,
             decoded,
             diffusion_log);
-        lm_->release_diffusion_graph();
+        impl_->lm->release_diffusion_graph();
         if (!local_status) {
             return local_status;
         }
@@ -375,7 +415,7 @@ Status OmniVoiceModel::generate_voice_clone(
     status = plan_text_chunks(
         request.target_text,
         target_frames,
-        config_.audio_tokenizer.frame_rate,
+        impl_->config.audio_tokenizer.frame_rate,
         options.audio_chunk_duration,
         options.audio_chunk_threshold,
         chunks);
