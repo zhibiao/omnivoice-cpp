@@ -133,8 +133,8 @@ Linux：
 .\build\windows-cuda\bin\Release\omnivoice-cli.exe --create-prompt `
   --model models\omnivoice-lm-f32.gguf `
   --audio-tokenizer models\omnivoice-tokenizer-f32.gguf `
-  --ref-audio voices\nana.wav `
-  --ref-text voices\nama.txt `
+  --ref-audio assets\nana.wav `
+  --ref-text assets\nama.txt `
   --language zh `
   --device CUDA0 `
   --prompt-output voices\nana.ovprompt
@@ -144,8 +144,8 @@ Linux：
 ./build/linux-cuda/bin/omnivoice-cli --create-prompt \
   --model models/omnivoice-lm-f32.gguf \
   --audio-tokenizer models/omnivoice-tokenizer-f32.gguf \
-  --ref-audio voices/nana.wav \
-  --ref-text voices/nama.txt \
+  --ref-audio assets/nana.wav \
+  --ref-text assets/nama.txt \
   --language zh \
   --device CUDA0 \
   --prompt-output voices/nana.ovprompt
@@ -227,11 +227,12 @@ RTX 2060 实测环境：Ryzen 7 4800H、GeForce RTX 2060 6 GB、驱动
 ## 目录
 
 ```text
-app/             CLI
+app/             CLI 与 HTTP 服务
 src/             C++ / GGML 模型与音频实现
 models/          GGUF 模型
 tools/           模型转换和精度转换入口
-voices/          参考音频、参考文本和 `.ovprompt`
+assets/          参考音频与参考文本
+voices/          `.ovprompt` 声音提示
 docs/            跨平台构建说明和 OmniVoice PyTorch 参考源码
 vendor/ggml-0.29.0/  vendored GGML
 ```
