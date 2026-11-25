@@ -81,14 +81,11 @@ public:
 private:
     void write(const std::string& message) {
         std::lock_guard<std::mutex> lock(mutex_);
-        const double seconds = std::chrono::duration<double>(
-            Clock::now() - start_).count();
-        std::cerr << '[' << format_seconds(seconds) << " s] " << message << '\n';
+        std::cerr << message << '\n';
     }
 
     bool verbose_;
     std::mutex mutex_;
-    Clock::time_point start_ = Clock::now();
 };
 
 struct ServerOptions {
@@ -744,6 +741,7 @@ void handle_speech(
     context.log.info(
         "speech: voice=" + voice_name + ", format=" + response_format +
         ", characters=" + std::to_string(utf8_length(input)) +
+        ", steps=" + std::to_string(num_step) +
         ", audio=" + format_seconds(audio_seconds) + " s, RTF=" +
         format_seconds(rtf));
 
