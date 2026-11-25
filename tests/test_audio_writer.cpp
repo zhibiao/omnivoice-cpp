@@ -1,6 +1,6 @@
 #include "status.h"
 #include "types.h"
-#include "audio_kit.h"
+#include "audio_proc.h"
 
 #include <array>
 #include <cstdint>

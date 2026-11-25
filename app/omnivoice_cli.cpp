@@ -1,4 +1,4 @@
-#include "audio_kit.h"
+#include "audio_proc.h"
 #include "omnivoice.h"
 #include "voice_clone_prompt.h"
 

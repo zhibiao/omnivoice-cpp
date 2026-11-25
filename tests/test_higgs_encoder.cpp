@@ -1,7 +1,7 @@
 #include "config.h"
 #include "gguf_model.h"
 #include "higgs_tokenizer/encoder.h"
-#include "audio_kit.h"
+#include "audio_proc.h"
 
 #include "ggml-backend.h"
 

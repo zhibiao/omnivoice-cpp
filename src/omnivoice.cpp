@@ -1,6 +1,6 @@
 #include "omnivoice.h"
 
-#include "audio_kit.h"
+#include "audio_proc.h"
 #include "diffusion_decoder/diffusion_decoder.h"
 #include "duration_estimator.h"
 #include "ggml_session.h"
