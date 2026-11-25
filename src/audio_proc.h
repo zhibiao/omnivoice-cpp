@@ -55,6 +55,17 @@ Status write_wav(
     const std::string& path,
     const AudioBuffer& audio);
 
+// Encodes a validated 24 kHz mono buffer as an in-memory 16-bit PCM WAV file.
+Status encode_wav_24k_mono(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& bytes);
+
+// Encodes a 24 kHz mono buffer as raw little-endian signed 16-bit PCM.
+// Samples outside [-1, 1] are clamped.
+Status encode_pcm_s16le(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& bytes);
+
 Status validate_audio_24k_mono(const AudioBuffer& audio);
 
 float compute_rms(const AudioBuffer& audio);

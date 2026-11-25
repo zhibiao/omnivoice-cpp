@@ -58,6 +58,9 @@ public:
     OmniVoiceModel(const OmniVoiceModel&) = delete;
     OmniVoiceModel& operator=(const OmniVoiceModel&) = delete;
 
+    // Not thread-safe: the ggml graphs cached inside the LM and the audio
+    // decoder are mutated on first use, so callers must serialize access to
+    // a single instance (see omnivoice_server for the worker pattern).
     Status load(
         const std::string& lm_gguf_path,
         const std::string& audio_tokenizer_gguf_path,

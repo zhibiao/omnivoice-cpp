@@ -19,3 +19,4 @@ vendor/ggml-0.29.0
 vendor/nlohmann
 vendor/uni-algo-1.2.0
 vendor/miniaudio-0.11.26
+vendor/cpp-httplib-0.67.0

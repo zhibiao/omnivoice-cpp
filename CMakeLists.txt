@@ -121,6 +121,22 @@ if(WIN32)
     target_link_libraries(omnivoice-cli PRIVATE shell32)
 endif()
 
+add_executable(omnivoice-server
+    app/omnivoice_server.cpp
+)
+omnivoice_configure_target(omnivoice-server)
+target_include_directories(omnivoice-server PRIVATE
+    ${PROJECT_SOURCE_DIR}/vendor
+    ${PROJECT_SOURCE_DIR}/vendor/cpp-httplib-0.67.0
+)
+target_link_libraries(omnivoice-server PRIVATE omnivoice-core)
+target_compile_definitions(omnivoice-server PRIVATE
+    OMNIVOICE_VERSION="${PROJECT_VERSION}"
+)
+if(WIN32)
+    target_link_libraries(omnivoice-server PRIVATE ws2_32)
+endif()
+
 include(CTest)
 
 if(BUILD_TESTING)

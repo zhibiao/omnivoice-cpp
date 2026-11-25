@@ -653,24 +653,26 @@ void append_u32(std::vector<uint8_t>& output, uint32_t value) {
     output.push_back(static_cast<uint8_t>(value >> 24));
 }
 
-} // namespace
-
-Status save_wav_24k_mono(
-    const std::string& path,
-    const AudioBuffer& audio) {
-    Status status = validate_audio_24k_mono(audio);
-    if (!status) {
-        return status;
+Status append_pcm_s16le(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& output) {
+    output.reserve(output.size() + audio.samples.size() * 2);
+    for (float sample : audio.samples) {
+        if (!std::isfinite(sample)) {
+            return Status::error("audio samples contain non-finite values");
+        }
+        sample = std::clamp(sample, -1.0f, 1.0f);
+        const int16_t pcm = sample >= 0.0f
+            ? static_cast<int16_t>(sample * 32767.0f)
+            : static_cast<int16_t>(sample * 32768.0f);
+        append_u16(output, static_cast<uint16_t>(pcm));
     }
-    return write_wav(path, audio);
+    return Status::ok();
 }
 
-Status write_wav(
-    const std::string& path,
-    const AudioBuffer& audio) {
-    if (path.empty()) {
-        return Status::error("WAV output path is empty");
-    }
+Status build_wav(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& output) {
     if (audio.samples.empty()) {
         return Status::error("WAV output has no samples");
     }
@@ -692,21 +694,82 @@ Status write_wav(
     const uint32_t byte_rate =
         static_cast<uint32_t>(audio.sample_rate) * block_align;
 
-    std::vector<uint8_t> header;
-    header.reserve(44);
-    header.insert(header.end(), {'R', 'I', 'F', 'F'});
-    append_u32(header, 36 + data_size);
-    header.insert(header.end(), {'W', 'A', 'V', 'E'});
-    header.insert(header.end(), {'f', 'm', 't', ' '});
-    append_u32(header, 16);
-    append_u16(header, 1);
-    append_u16(header, channels);
-    append_u32(header, static_cast<uint32_t>(audio.sample_rate));
-    append_u32(header, byte_rate);
-    append_u16(header, block_align);
-    append_u16(header, 16);
-    header.insert(header.end(), {'d', 'a', 't', 'a'});
-    append_u32(header, data_size);
+    output.clear();
+    output.reserve(44 + data_size);
+    output.insert(output.end(), {'R', 'I', 'F', 'F'});
+    append_u32(output, 36 + data_size);
+    output.insert(output.end(), {'W', 'A', 'V', 'E'});
+    output.insert(output.end(), {'f', 'm', 't', ' '});
+    append_u32(output, 16);
+    append_u16(output, 1);
+    append_u16(output, channels);
+    append_u32(output, static_cast<uint32_t>(audio.sample_rate));
+    append_u32(output, byte_rate);
+    append_u16(output, block_align);
+    append_u16(output, 16);
+    output.insert(output.end(), {'d', 'a', 't', 'a'});
+    append_u32(output, data_size);
+    return append_pcm_s16le(audio, output);
+}
+
+} // namespace
+
+Status save_wav_24k_mono(
+    const std::string& path,
+    const AudioBuffer& audio) {
+    Status status = validate_audio_24k_mono(audio);
+    if (!status) {
+        return status;
+    }
+    return write_wav(path, audio);
+}
+
+Status encode_wav_24k_mono(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& bytes) {
+    bytes.clear();
+    Status status = validate_audio_24k_mono(audio);
+    if (!status) {
+        return status;
+    }
+    status = build_wav(audio, bytes);
+    if (!status) {
+        bytes.clear();
+    }
+    return status;
+}
+
+Status encode_pcm_s16le(
+    const AudioBuffer& audio,
+    std::vector<uint8_t>& bytes) {
+    bytes.clear();
+    if (audio.samples.empty()) {
+        return Status::error("audio buffer is empty");
+    }
+    if (audio.sample_rate != OMNIVOICE_SAMPLE_RATE) {
+        return Status::error("audio buffer must be 24000 Hz");
+    }
+    if (audio.channels != 1) {
+        return Status::error("audio buffer must be mono");
+    }
+    const Status status = append_pcm_s16le(audio, bytes);
+    if (!status) {
+        bytes.clear();
+    }
+    return status;
+}
+
+Status write_wav(
+    const std::string& path,
+    const AudioBuffer& audio) {
+    if (path.empty()) {
+        return Status::error("WAV output path is empty");
+    }
+    std::vector<uint8_t> bytes;
+    Status status = build_wav(audio, bytes);
+    if (!status) {
+        return status;
+    }
 
     std::ofstream file(
         std::filesystem::u8path(path),
@@ -715,24 +778,8 @@ Status write_wav(
         return Status::error("failed to open WAV output: " + path);
     }
     file.write(
-        reinterpret_cast<const char*>(header.data()),
-        static_cast<std::streamsize>(header.size()));
-
-    for (float sample : audio.samples) {
-        if (!std::isfinite(sample)) {
-            return Status::error("WAV samples contain non-finite values");
-        }
-        sample = std::clamp(sample, -1.0f, 1.0f);
-        const int16_t pcm = sample >= 0.0f
-            ? static_cast<int16_t>(sample * 32767.0f)
-            : static_cast<int16_t>(sample * 32768.0f);
-        const uint16_t raw = static_cast<uint16_t>(pcm);
-        const char bytes[2] = {
-            static_cast<char>(raw),
-            static_cast<char>(raw >> 8),
-        };
-        file.write(bytes, 2);
-    }
+        reinterpret_cast<const char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
     if (!file) {
         return Status::error("failed to write WAV output: " + path);
     }

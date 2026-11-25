@@ -302,3 +302,49 @@ set_tests_properties(
     PROPERTIES
     LABELS "portable;cli"
 )
+
+add_test(
+    NAME omnivoice_server_version
+    COMMAND $<TARGET_FILE:omnivoice-server> --version
+)
+add_test(
+    NAME omnivoice_server_help
+    COMMAND $<TARGET_FILE:omnivoice-server> --help
+)
+add_test(
+    NAME omnivoice_server_unknown_option
+    COMMAND $<TARGET_FILE:omnivoice-server> --unknown-option
+)
+set_tests_properties(
+    omnivoice_server_unknown_option
+    PROPERTIES
+    WILL_FAIL TRUE
+)
+add_test(
+    NAME omnivoice_server_requires_args
+    COMMAND $<TARGET_FILE:omnivoice-server>
+)
+set_tests_properties(
+    omnivoice_server_requires_args
+    PROPERTIES
+    WILL_FAIL TRUE
+)
+add_test(
+    NAME omnivoice_server_voice_spec_requires_name
+    COMMAND $<TARGET_FILE:omnivoice-server> --model x --audio-tokenizer y
+        --voice-dir missing-voices --voice broken
+)
+set_tests_properties(
+    omnivoice_server_voice_spec_requires_name
+    PROPERTIES
+    WILL_FAIL TRUE
+)
+set_tests_properties(
+    omnivoice_server_version
+    omnivoice_server_help
+    omnivoice_server_unknown_option
+    omnivoice_server_requires_args
+    omnivoice_server_voice_spec_requires_name
+    PROPERTIES
+    LABELS "portable;cli"
+)

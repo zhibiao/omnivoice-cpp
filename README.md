@@ -164,6 +164,50 @@ Linux：
   --no-denoise
 ```
 
+## HTTP 服务
+
+`omnivoice-server` 暴露 OpenAI 兼容的语音合成端点，声音来自启动时加载的
+`.ovprompt`：
+
+```powershell
+.\build\windows-cuda\bin\Release\omnivoice-server.exe `
+  --model models\omnivoice-lm-q8_0.gguf `
+  --audio-tokenizer models\omnivoice-tokenizer-f32.gguf `
+  --voice-dir voices `
+  --device CUDA0 `
+  --port 8080
+```
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"omnivoice","input":"今天天气不错。","voice":"nana","response_format":"wav"}' \
+  --output speech.wav
+```
+
+| 端点 | 说明 |
+|---|---|
+| `POST /v1/audio/speech` | 文本转语音 |
+| `GET /v1/models` | 返回配置的模型名 |
+| `GET /health` | 存活探测 |
+
+请求字段：`input`（必填，≤4096 字符）、`voice`（缺省时用
+`--default-voice`，只有一个声音时自动选中）、`response_format`（`wav` 或
+`pcm`，默认 `wav`）、`speed`（0.25–4.0）；扩展字段 `language`、`denoise`、
+`seed`。`model` 与 `instructions` 会被接受但忽略，以便官方 SDK 直接调用。
+
+没有 `/v1/audio/voices`：可用声音由 `--voice-dir`（扫描 `*.ovprompt`）和
+`--voice NAME=PATH` 决定，`voice` 未知时 400 响应会列出全部可用名字。
+
+推理串行执行。模型内部的 ggml graph 带可变缓存，不能并发进入，因此 server
+用单工作线程 + 有界队列（`--max-queue`，默认 2）处理请求，队列满时返回
+429；HTTP 线程只负责入队和等待，`/health` 与 `/v1/models` 不会被生成阻塞。
+需要更高吞吐时应启动多个进程，每个进程独占一张 GPU。
+
+`--api-key KEY` 要求 `Authorization: Bearer KEY`（`/health` 除外）。`wav`
+输出 24 kHz 单声道 16-bit PCM；`pcm` 为裸 s16le、同样 24 kHz 单声道；
+`mp3`/`flac` 等其它格式返回 400。
+
 ## 当前性能
 
 相同负载：实际生成 9.04 秒音频、8 x 221 target cells、32 步扩散、
