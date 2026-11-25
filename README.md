@@ -187,8 +187,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   --output speech.wav
 ```
 
-Windows PowerShell：`curl` 是 `Invoke-WebRequest` 的别名，且 5.1 传参使用本地
-代码页，内联中文会被转坏。用下面的写法：
+Windows PowerShell（`curl` 是 `Invoke-WebRequest` 的别名，内联中文会乱码）：
 
 ```powershell
 $json = '{"model":"omnivoice","input":"今天，中国人民正在意气风发推进中国式现代化建设。","voice":"nana","response_format":"wav","num_step":16}'
