@@ -98,7 +98,6 @@ struct ServerOptions {
     std::string audio_tokenizer;
     std::string device = "CPU";
     std::string voice_dir = "voices";
-    std::vector<std::string> voice_specs;
     std::string default_voice;
     std::string language = "None";
     std::string api_key;
@@ -124,7 +123,6 @@ void print_usage() {
         << "  --port PORT              bind port (default 8080)\n"
         << "  --device DEVICE          GGML device, e.g. CPU or CUDA0\n"
         << "  --voice-dir DIR          scan DIR for *.ovprompt (default voices)\n"
-        << "  --voice NAME=PATH        add or override a voice prompt\n"
         << "  --default-voice NAME     voice used when a request omits it\n"
         << "  --language LANG          default language tag (default None)\n"
         << "  --model-name NAME        model id reported by /v1/models\n"
@@ -224,14 +222,6 @@ ParseResult parse_arguments(
             if (!take_value(options.voice_dir)) {
                 return ParseResult::Error;
             }
-            continue;
-        }
-        if (option == "--voice") {
-            std::string spec;
-            if (!take_value(spec)) {
-                return ParseResult::Error;
-            }
-            options.voice_specs.push_back(std::move(spec));
             continue;
         }
         if (option == "--default-voice") {
@@ -807,25 +797,10 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << status.message() << '\n';
         return 1;
     }
-    for (const std::string& spec : options.voice_specs) {
-        const size_t separator = spec.find('=');
-        if (separator == std::string::npos || separator == 0) {
-            std::cerr << "error: --voice expects NAME=PATH, got: " << spec << '\n';
-            return 2;
-        }
-        status = voices.add_file(
-            spec.substr(0, separator),
-            spec.substr(separator + 1),
-            log);
-        if (!status) {
-            std::cerr << "error: " << status.message() << '\n';
-            return 1;
-        }
-    }
     if (voices.empty()) {
         std::cerr
-            << "error: no voice prompts configured; use --voice-dir or "
-               "--voice NAME=PATH\n";
+            << "error: no voice prompts found in '" << options.voice_dir
+            << "'; add .ovprompt files or point --voice-dir at them\n";
         return 1;
     }
 

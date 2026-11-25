@@ -196,8 +196,8 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 `pcm`，默认 `wav`）、`speed`（0.25–4.0）；扩展字段 `language`、`denoise`、
 `seed`。`model` 与 `instructions` 会被接受但忽略，以便官方 SDK 直接调用。
 
-没有 `/v1/audio/voices`：可用声音由 `--voice-dir`（扫描 `*.ovprompt`）和
-`--voice NAME=PATH` 决定，`voice` 未知时 400 响应会列出全部可用名字。
+没有 `/v1/audio/voices`：可用声音就是 `--voice-dir` 下扫描到的 `*.ovprompt`
+（文件名即 voice 名），`voice` 未知时 400 响应会列出全部可用名字。
 
 推理串行执行。模型内部的 ggml graph 带可变缓存，不能并发进入，因此 server
 用单工作线程 + 有界队列（`--max-queue`，默认 2）处理请求，队列满时返回
