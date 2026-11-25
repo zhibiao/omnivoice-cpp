@@ -15,16 +15,16 @@ GGUF，不依赖 Python、PyTorch 或 Transformers。
 - Higgs Audio Decoder。
 - 可复用 `.ovprompt` 音色 Prompt。
 - 长文本分块、音频拼接和 cross-fade。
-- CPU / CUDA 共用一个由 `--device` 指定的 backend。
+- CPU / CUDA 由 `--device` 选择主 backend；CUDA 路径保留 CPU fallback 处理未实现的算子。
 - LM F32、Q8_0、F16、BF16。
 
 当前计算路径：
 
-- Conditional / unconditional LM 使用固定形状持久图。
-- 默认 `class_temperature=0` 时，CPU 和 CUDA 共用 backend Selector graph。
-- `class_temperature>0` 使用 host 随机采样路径。
-- CUDA Higgs Decoder 使用 phase 分解转置卷积、`1x1` 矩阵乘路径和持久图。
-- Qwen3 使用 packed QKV、无显式 mask FlashAttention 和 RMSNorm 融合。
+- 条件 / 无条件序列打包进同一张图，在本次 chunk 的所有扩散步之间复用；形状由本次序列长度固定。
+- 默认 `class_temperature=0` 时，argmax 和 confidence 在 LM 图内完成（fused deterministic sampler），host 只做 top-k 选择。
+- `class_temperature>0` 时把条件 / 无条件两份 logits 拉回 host，走随机采样路径。
+- Qwen3 使用 packed QKV、无 mask 的双向 `ggml_flash_attn_ext`（F32）和 RMSNorm + SwiGLU。
+- CUDA Higgs Decoder 是单张持久图（帧数不变时复用）：转置卷积走 phase 分解 + `mul_mat`，CPU 仍用 `ggml_conv_transpose_1d`；1x1 卷积统一走矩阵乘。
 
 ## 当前限制
 
