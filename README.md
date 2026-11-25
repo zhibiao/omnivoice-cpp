@@ -178,11 +178,26 @@ Linux：
   --port 8080
 ```
 
+Linux / macOS / Git Bash：
+
 ```bash
 curl http://127.0.0.1:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{"model":"omnivoice","input":"今天天气不错。","voice":"nana","response_format":"wav"}' \
   --output speech.wav
+```
+
+Windows PowerShell：`curl` 是 `Invoke-WebRequest` 的别名，且 5.1 传参使用本地
+代码页，内联中文会被转坏。用下面的写法：
+
+```powershell
+$json = '{"model":"omnivoice","input":"今天天气不错。","voice":"nana","response_format":"wav"}'
+Invoke-WebRequest http://127.0.0.1:8080/v1/audio/speech `
+  -Method Post `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) `
+  -OutFile speech.wav `
+  -UseBasicParsing
 ```
 
 | 端点 | 说明 |
