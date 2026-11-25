@@ -209,7 +209,22 @@ Invoke-WebRequest http://127.0.0.1:8080/v1/audio/speech `
 请求字段：`input`（必填，≤4096 字符）、`voice`（缺省时用
 `--default-voice`，只有一个声音时自动选中）、`response_format`（`wav` 或
 `pcm`，默认 `wav`）、`speed`（0.25–4.0）；扩展字段 `language`、`denoise`、
-`seed`。`model` 与 `instructions` 会被接受但忽略，以便官方 SDK 直接调用。
+`seed`、`num_step`。`model` 与 `instructions` 会被接受但忽略，以便官方 SDK
+直接调用。
+
+`num_step` 覆盖模型 GGUF 里的 `omnivoice.generation.num_step`（默认 32），
+必须是 1–256 的整数；类型错误或越界返回 400，未提供时沿用模型默认值。
+OpenAI Python SDK 不认识这个扩展字段，需要通过 `extra_body` 传递：
+
+```python
+client.audio.speech.create(
+    model="omnivoice",
+    voice="nana",
+    input="今天天气不错。",
+    response_format="wav",
+    extra_body={"num_step": 16},
+)
+```
 
 没有 `/v1/audio/voices`：可用声音就是 `--voice-dir` 下扫描到的 `*.ovprompt`
 （文件名即 voice 名），`voice` 未知时 400 响应会列出全部可用名字。

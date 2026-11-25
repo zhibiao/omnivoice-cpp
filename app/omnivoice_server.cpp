@@ -650,6 +650,29 @@ void handle_speech(
         speed = static_cast<float>(requested_speed);
     }
 
+    int32_t num_step = context.defaults.num_step;
+    if (body.contains("num_step") && !body["num_step"].is_null()) {
+        const nlohmann::json& value = body["num_step"];
+        int64_t requested_step = 0;
+        if (value.is_number_unsigned()) {
+            const uint64_t raw_step = value.get<uint64_t>();
+            requested_step =
+                raw_step <= 256 ? static_cast<int64_t>(raw_step) : 0;
+        } else if (value.is_number_integer()) {
+            requested_step = value.get<int64_t>();
+        }
+        if (requested_step < 1 || requested_step > 256) {
+            send_error(
+                response,
+                400,
+                "num_step must be an integer between 1 and 256",
+                "invalid_request_error",
+                "num_step");
+            return;
+        }
+        num_step = static_cast<int32_t>(requested_step);
+    }
+
     std::string language = context.options.language;
     if (body.contains("language") && body["language"].is_string()) {
         language = body["language"].get<std::string>();
@@ -672,6 +695,7 @@ void handle_speech(
     clone_request.seed = seed;
     clone_request.denoise = denoise;
     omnivoice::VoiceCloneConfig config = context.defaults;
+    config.num_step = num_step;
     config.denoise = denoise;
     clone_request.generation_config = config;
     Logger* logger = &context.log;
