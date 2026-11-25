@@ -8,6 +8,12 @@
 
 namespace omnivoice {
 
+// Native sample rate of the OmniVoice codec.
+constexpr int32_t OMNIVOICE_SAMPLE_RATE = 24000;
+
+// Number of samples covered by one codec frame.
+constexpr int32_t OMNIVOICE_HOP_LENGTH = 960;
+
 using LogCallback = std::function<void(const std::string&)>;
 
 inline void log_message(
@@ -20,7 +26,7 @@ inline void log_message(
 
 struct AudioBuffer {
     std::vector<float> samples;
-    int32_t sample_rate = 24000;
+    int32_t sample_rate = OMNIVOICE_SAMPLE_RATE;
     int32_t channels = 1;
 
     // Samples are frame-major. For stereo, the layout is L,R,L,R...

@@ -1,6 +1,6 @@
 #include "voice_clone_prompt.h"
 
-#include "audio_proc.h"
+#include "audio_toolkit/audio_processing.h"
 
 #include <algorithm>
 #include <array>

@@ -1,4 +1,5 @@
-#include "audio_proc.h"
+#include "audio_toolkit/audio_loader.h"
+#include "audio_toolkit/audio_writer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -76,6 +77,18 @@ int main() {
             peak > 0.4f &&
             peak < 0.6f &&
             std::abs(crossings - 440) <= 12;
+
+        // load_audio keeps the MP3's native format.
+        omnivoice::AudioBuffer mp3_native;
+        status = omnivoice::load_audio(mp3_path.u8string(), mp3_native);
+        const bool mp3_native_valid =
+            status &&
+            mp3_native.sample_rate == 44100 &&
+            mp3_native.channels == 2 &&
+            !mp3_native.samples.empty() &&
+            std::abs(
+                mp3_native.duration_seconds() - mp3.duration_seconds()) <
+                0.01;
 
         // Unsupported containers are rejected.
         omnivoice::AudioBuffer unsupported;
@@ -183,6 +196,49 @@ int main() {
             dc_mix > 0.0f &&
             dc_mix < 0.39f;
 
+        // Uncommon rates are brought to 24 kHz with the same duration.
+        bool low_rate_valid = false;
+        bool high_rate_valid = false;
+        for (int32_t rate : {8000, 96000}) {
+            const int32_t frames = rate / 10;
+            omnivoice::AudioBuffer source;
+            source.sample_rate = rate;
+            source.channels = 1;
+            for (int32_t index = 0; index < frames; ++index) {
+                source.samples.push_back(static_cast<float>(
+                    0.25 * std::sin(
+                        2.0 * PI * 440.0 * index / rate)));
+            }
+            const std::filesystem::path path =
+                std::filesystem::temp_directory_path() /
+                (rate == 8000
+                     ? "omnivoice_decode_8k.wav"
+                     : "omnivoice_decode_96k.wav");
+            temporaries.push_back(path);
+            status = omnivoice::write_wav(path.u8string(), source);
+            omnivoice::AudioBuffer converted_rate;
+            if (status) {
+                status = omnivoice::load_audio_24k_mono(
+                    path.u8string(),
+                    converted_rate);
+            }
+            const int64_t expected_frames =
+                (static_cast<int64_t>(24000) * frames + rate - 1) / rate;
+            const bool valid =
+                status &&
+                converted_rate.sample_rate == 24000 &&
+                converted_rate.channels == 1 &&
+                converted_rate.samples.size() ==
+                    static_cast<size_t>(expected_frames) &&
+                std::abs(
+                    count_zero_crossings(converted_rate.samples) - 88) <= 5;
+            if (rate == 8000) {
+                low_rate_valid = valid;
+            } else {
+                high_rate_valid = valid;
+            }
+        }
+
         // Missing files are rejected.
         omnivoice::AudioBuffer missing;
         status = omnivoice::load_audio_24k_mono(
@@ -210,12 +266,19 @@ int main() {
                   << "decode_wav_downmix_valid: "
                   << (downmix_valid ? "true" : "false") << '\n'
                   << "decode_wav_downmix_value: " << dc_mix << '\n'
+                  << "decode_mp3_native: "
+                  << (mp3_native_valid ? "true" : "false") << '\n'
+                  << "decode_wav_8k: "
+                  << (low_rate_valid ? "true" : "false") << '\n'
+                  << "decode_wav_96k: "
+                  << (high_rate_valid ? "true" : "false") << '\n'
                   << "decode_missing_rejected: "
                   << (missing_rejected ? "true" : "false") << '\n';
 
         cleanup();
-        if (!mp3_valid || !unsupported_rejected || !wav_valid ||
-            !converted_valid || !downmix_valid || !missing_rejected) {
+        if (!mp3_valid || !mp3_native_valid || !unsupported_rejected ||
+            !wav_valid || !converted_valid || !low_rate_valid ||
+            !high_rate_valid || !downmix_valid || !missing_rejected) {
             return 1;
         }
         return 0;

@@ -77,7 +77,10 @@ function(omnivoice_configure_target target)
 endfunction()
 
 add_library(omnivoice-core STATIC
-    src/audio_proc.cpp
+    src/audio_toolkit/audio_processing.cpp
+    src/audio_toolkit/audio_loader.cpp
+    src/audio_toolkit/audio_resampler.cpp
+    src/audio_toolkit/audio_writer.cpp
     src/config.cpp
     src/diffusion_decoder/diffusion_decoder.cpp
     src/diffusion_decoder/mask_schedule.cpp

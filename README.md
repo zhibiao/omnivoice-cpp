@@ -32,7 +32,7 @@ GGUF，不依赖 Python、PyTorch 或 Transformers。
 - 未实现 Voice Design、`instruct` 音色设计和 Auto Voice CLI。
 - 不支持 Whisper 自动转写参考文本。
 - 不包含训练、微调或 Web UI。
-- 参考音频支持 WAV 和 MP3，统一转换为 24 kHz 单声道后送入模型；FLAC、OGG、M4A 等其他格式直接报错。
+- 参考音频支持 WAV 和 MP3，统一转换为 24 kHz 单声道后送入模型；重采样使用与 torchaudio 一致的 Hann 窗 sinc（常见采样率 8–192 kHz）；FLAC、OGG、M4A 等其他格式直接报错。
 - 只允许转换 LM；Higgs audio tokenizer 必须保持 F32。
 
 ## 平台与编译

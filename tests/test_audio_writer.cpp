@@ -1,9 +1,11 @@
 #include "status.h"
 #include "types.h"
-#include "audio_proc.h"
+#include "audio_toolkit/audio_loader.h"
+#include "audio_toolkit/audio_writer.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -122,6 +124,52 @@ int main() {
     if (omnivoice::encode_pcm_s16le(empty, rejected) ||
         !rejected.empty()) {
         std::cerr << "encode_pcm_s16le accepted an empty buffer\n";
+        return 1;
+    }
+
+    // Stereo WAV keeps both channels and an arbitrary sample rate.
+    omnivoice::AudioBuffer stereo;
+    stereo.sample_rate = 44100;
+    stereo.channels = 2;
+    stereo.samples = {0.0f, 0.5f, -0.25f, 0.75f};
+    const std::filesystem::path stereo_output =
+        std::filesystem::temp_directory_path() /
+        "omnivoice_audio_writer_stereo.wav";
+    omnivoice::Status stereo_status =
+        omnivoice::write_wav(stereo_output.string(), stereo);
+    if (!stereo_status) {
+        std::cerr << "stereo write_wav failed: "
+                  << stereo_status.message() << '\n';
+        return 1;
+    }
+    omnivoice::AudioBuffer stereo_loaded;
+    stereo_status =
+        omnivoice::load_audio(stereo_output.string(), stereo_loaded);
+    std::filesystem::remove(stereo_output);
+    if (!stereo_status ||
+        stereo_loaded.sample_rate != 44100 ||
+        stereo_loaded.channels != 2 ||
+        stereo_loaded.samples.size() != stereo.samples.size()) {
+        std::cerr << "stereo WAV round-trip failed\n";
+        return 1;
+    }
+    for (size_t index = 0; index < stereo.samples.size(); ++index) {
+        if (std::abs(stereo_loaded.samples[index] - stereo.samples[index]) >
+            4e-5f) {
+            std::cerr << "stereo WAV sample mismatch\n";
+            return 1;
+        }
+    }
+
+    // The WAV writer intentionally supports mono and stereo only.
+    omnivoice::AudioBuffer three_channels;
+    three_channels.channels = 3;
+    three_channels.samples = {0.0f, 0.0f, 0.0f};
+    if (omnivoice::write_wav(
+            (std::filesystem::temp_directory_path() /
+             "omnivoice_audio_writer_3ch.wav").string(),
+            three_channels)) {
+        std::cerr << "write_wav accepted three channels\n";
         return 1;
     }
     return 0;

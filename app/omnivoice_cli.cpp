@@ -1,4 +1,6 @@
-#include "audio_proc.h"
+#include "audio_toolkit/audio_processing.h"
+#include "audio_toolkit/audio_loader.h"
+#include "audio_toolkit/audio_writer.h"
 #include "omnivoice.h"
 #include "voice_clone_prompt.h"
 

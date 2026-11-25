@@ -1,4 +1,6 @@
-#include "audio_proc.h"
+#include "audio_toolkit/audio_processing.h"
+#include "audio_toolkit/audio_loader.h"
+#include "audio_toolkit/audio_writer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -110,6 +113,65 @@ std::vector<uint8_t> float32_bytes(
 
 std::string utf8_string(const std::filesystem::path& path) {
     return path.u8string();
+}
+
+std::filesystem::path write_raw_file(
+    const std::string& name,
+    const std::vector<uint8_t>& bytes) {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / name;
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(
+        reinterpret_cast<const char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    return path;
+}
+
+std::filesystem::path write_extensible_wav(
+    const std::string& name,
+    uint32_t sample_rate,
+    uint16_t channels,
+    uint16_t bits_per_sample,
+    const std::vector<uint8_t>& sample_bytes) {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / name;
+    const uint16_t block_align =
+        static_cast<uint16_t>(channels * bits_per_sample / 8);
+    const uint32_t byte_rate = sample_rate * block_align;
+
+    std::vector<uint8_t> file;
+    append_tag(file, "RIFF");
+    append_u32(
+        file,
+        static_cast<uint32_t>(60 + sample_bytes.size()));
+    append_tag(file, "WAVE");
+    append_tag(file, "fmt ");
+    append_u32(file, 40);
+    append_u16(file, 0xfffe);  // WAVE_FORMAT_EXTENSIBLE
+    append_u16(file, channels);
+    append_u32(file, sample_rate);
+    append_u32(file, byte_rate);
+    append_u16(file, block_align);
+    append_u16(file, bits_per_sample);
+    append_u16(file, 22);  // cbSize
+    append_u16(file, bits_per_sample);  // wValidBitsPerSample
+    append_u32(file, 0);  // dwChannelMask
+    // SubFormat KSDATAFORMAT_SUBTYPE_PCM.
+    append_u16(file, 1);
+    const uint8_t guid_tail[] = {
+        0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80,
+        0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+    };
+    file.insert(file.end(), std::begin(guid_tail), std::end(guid_tail));
+    append_tag(file, "data");
+    append_u32(file, static_cast<uint32_t>(sample_bytes.size()));
+    file.insert(file.end(), sample_bytes.begin(), sample_bytes.end());
+
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(
+        reinterpret_cast<const char*>(file.data()),
+        static_cast<std::streamsize>(file.size()));
+    return path;
 }
 
 } // namespace
@@ -234,6 +296,188 @@ int main() {
     paths.push_back(stereo_path);
     if (omnivoice::load_wav_24k_mono(stereo_path.string(), pcm16)) {
         std::cerr << "stereo input must be rejected\n";
+        cleanup();
+        return 1;
+    }
+
+    // load_audio keeps native sample rate, channel count and interleaving.
+    const auto native_path = write_test_wav(
+        "omnivoice_audio_loader_native_44k_stereo.wav",
+        1,
+        16,
+        44100,
+        2,
+        pcm16_bytes({16384, -16384, 8192, 4096, 0, -32768}));
+    paths.push_back(native_path);
+    omnivoice::AudioBuffer native;
+    status = omnivoice::load_audio(native_path.string(), native);
+    if (!status ||
+        native.sample_rate != 44100 ||
+        native.channels != 2 ||
+        native.samples.size() != 6 ||
+        !close_to(native.samples[0], 0.5f) ||
+        !close_to(native.samples[1], -0.5f) ||
+        !close_to(native.samples[2], 0.25f) ||
+        !close_to(native.samples[3], 0.125f) ||
+        !close_to(native.samples[4], 0.0f) ||
+        !close_to(native.samples[5], -1.0f)) {
+        std::cerr << "load_audio native WAV mismatch\n";
+        cleanup();
+        return 1;
+    }
+
+    omnivoice::AudioBuffer native_48k;
+    status = omnivoice::load_audio(wrong_rate_path.string(), native_48k);
+    if (!status ||
+        native_48k.sample_rate != 48000 ||
+        native_48k.channels != 1 ||
+        native_48k.samples.size() != 2 ||
+        !close_to(native_48k.samples[1], 100.0f / 32768.0f)) {
+        std::cerr << "load_audio must not resample WAV input\n";
+        cleanup();
+        return 1;
+    }
+
+    // The general loader and the strict loader agree on 24 kHz mono files.
+    omnivoice::AudioBuffer loose;
+    omnivoice::AudioBuffer strict_reloaded;
+    status = omnivoice::load_audio(pcm16_path.string(), loose);
+    if (status) {
+        status = omnivoice::load_wav_24k_mono(
+            pcm16_path.string(),
+            strict_reloaded);
+    }
+    if (!status ||
+        loose.sample_rate != strict_reloaded.sample_rate ||
+        loose.channels != strict_reloaded.channels ||
+        loose.samples != strict_reloaded.samples) {
+        std::cerr << "load_audio differs from load_wav_24k_mono\n";
+        cleanup();
+        return 1;
+    }
+
+    // WAVE_FORMAT_EXTENSIBLE headers are accepted.
+    const auto extensible_path = write_extensible_wav(
+        "omnivoice_audio_loader_extensible.wav",
+        32000,
+        2,
+        16,
+        pcm16_bytes({1000, -1000, 2000, -2000}));
+    paths.push_back(extensible_path);
+    omnivoice::AudioBuffer extensible;
+    status = omnivoice::load_audio(extensible_path.string(), extensible);
+    if (!status ||
+        extensible.sample_rate != 32000 ||
+        extensible.channels != 2 ||
+        extensible.samples.size() != 4 ||
+        !close_to(extensible.samples[2], 2000.0f / 32768.0f)) {
+        std::cerr << "extensible WAV load mismatch\n";
+        cleanup();
+        return 1;
+    }
+    if (omnivoice::load_wav_24k_mono(extensible_path.string(), pcm16)) {
+        std::cerr << "strict loader accepted a 32 kHz stereo file\n";
+        cleanup();
+        return 1;
+    }
+
+    // Unsupported PCM bit depths are rejected by both loaders.
+    const auto pcm8_path = write_test_wav(
+        "omnivoice_audio_loader_pcm8.wav",
+        1,
+        8,
+        24000,
+        1,
+        {0, 128});
+    paths.push_back(pcm8_path);
+    if (omnivoice::load_audio(pcm8_path.string(), pcm16) ||
+        omnivoice::load_wav_24k_mono(pcm8_path.string(), pcm16)) {
+        std::cerr << "8-bit PCM must be rejected\n";
+        cleanup();
+        return 1;
+    }
+
+    // Truncated and non-audio files are rejected.
+    std::vector<uint8_t> truncated;
+    append_tag(truncated, "RIFF");
+    append_u32(truncated, 4);
+    append_tag(truncated, "WAVE");
+    const auto truncated_path = write_raw_file(
+        "omnivoice_audio_loader_truncated.wav",
+        truncated);
+    paths.push_back(truncated_path);
+    if (omnivoice::load_audio(truncated_path.string(), pcm16) ||
+        omnivoice::load_wav_24k_mono(truncated_path.string(), pcm16)) {
+        std::cerr << "truncated WAV must be rejected\n";
+        cleanup();
+        return 1;
+    }
+    const auto garbage_path = write_raw_file(
+        "omnivoice_audio_loader_garbage.bin",
+        std::vector<uint8_t>(32, 0x41));
+    paths.push_back(garbage_path);
+    if (omnivoice::load_audio(garbage_path.string(), pcm16)) {
+        std::cerr << "non-audio data must be rejected\n";
+        cleanup();
+        return 1;
+    }
+    if (omnivoice::load_audio(
+            (std::filesystem::temp_directory_path() /
+             "omnivoice_missing_audio.wav").string(),
+            pcm16)) {
+        std::cerr << "missing audio must be rejected\n";
+        cleanup();
+        return 1;
+    }
+
+    // MP3 is decoded at its native rate and channel count.
+    const std::filesystem::path mp3_path =
+        std::filesystem::path(OMNIVOICE_TEST_DATA_DIR) /
+        "audio_tone_44k_stereo.mp3";
+    if (std::filesystem::is_regular_file(mp3_path)) {
+        omnivoice::AudioBuffer mp3;
+        status = omnivoice::load_audio(mp3_path.u8string(), mp3);
+        float mp3_peak = 0.0f;
+        for (float sample : mp3.samples) {
+            mp3_peak = std::max(mp3_peak, std::abs(sample));
+        }
+        if (!status ||
+            mp3.sample_rate != 44100 ||
+            mp3.channels != 2 ||
+            mp3.samples.empty() ||
+            mp3.samples.size() % 2 != 0 ||
+            mp3.duration_seconds() < 0.4 ||
+            mp3.duration_seconds() > 0.6 ||
+            mp3_peak < 0.4f ||
+            mp3_peak > 0.6f) {
+            std::cerr << "native MP3 decode mismatch\n";
+            cleanup();
+            return 1;
+        }
+    } else {
+        std::cout << "native MP3 decode skipped: test data unavailable\n";
+    }
+
+    // 24 kHz stereo is downmixed without changing the frame count.
+    const auto stereo_24_path = write_test_wav(
+        "omnivoice_audio_loader_stereo_24k.wav",
+        1,
+        16,
+        24000,
+        2,
+        pcm16_bytes({16384, 8192, 16384, 8192}));
+    paths.push_back(stereo_24_path);
+    omnivoice::AudioBuffer downmixed;
+    status = omnivoice::load_audio_24k_mono(
+        stereo_24_path.string(),
+        downmixed);
+    if (!status ||
+        downmixed.sample_rate != 24000 ||
+        downmixed.channels != 1 ||
+        downmixed.samples.size() != 2 ||
+        !close_to(downmixed.samples[0], 0.375f) ||
+        !close_to(downmixed.samples[1], 0.375f)) {
+        std::cerr << "24 kHz stereo downmix mismatch\n";
         cleanup();
         return 1;
     }
